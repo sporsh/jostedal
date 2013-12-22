@@ -33,6 +33,10 @@ CLASS_INDICATION =          0x01
 CLASS_RESPONSE_SUCCESS =    0x10
 CLASS_RESPONSE_ERROR =      0x11
 
+class StunMessageParser(object):
+    def __init__(self):
+        self.buffer = ''
+
 
 class StunMessage(tuple):
     """STUN message structure
