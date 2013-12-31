@@ -33,10 +33,6 @@ CLASS_INDICATION =          0x01
 CLASS_RESPONSE_SUCCESS =    0x10
 CLASS_RESPONSE_ERROR =      0x11
 
-class StunMessageParser(object):
-    def __init__(self):
-        self.buffer = ''
-
 
 class StunMessage(tuple):
     """STUN message structure
@@ -97,7 +93,7 @@ class StunMessage(tuple):
 
     def __repr__(self):
         return ("{}(method={:#05x}, class={:#04x}, length={}, magic_cookie={:#010x}, "
-                "transaction_id={}, attributes={})".format(self.__class__,
+                "transaction_id={}, attributes={})".format(type(self),
                     self.msg_method, self.msg_class, self.msg_length,
                     self.magic_cookie, self.transaction_id.encode('hex'),
                     self.attributes))
@@ -419,16 +415,16 @@ class Padding(StunMessageAttribute):
 
 
 
-msg_data = str(bytearray.fromhex(
-    "010100582112a4427a2f2b504c6a7457"
-    "52616c5600200008000191170f01b020"
-    "000100080001b0052e131462802b0008"
-    "00010d960af0d7b4802c000800010d97"
-    "0af0d7b48022001a4369747269782d31"
-    "2e382e372e302027426c61636b20446f"
-    "7727424e80280004aea90559"))
-msg = StunMessage.decode(msg_data)
-print repr(msg[:-1])
-for attribute in msg.attributes:
-    print repr(attribute)
-
+if __name__ == '__main__':
+    msg_data = str(bytearray.fromhex(
+        "010100582112a4427a2f2b504c6a7457"
+        "52616c5600200008000191170f01b020"
+        "000100080001b0052e131462802b0008"
+        "00010d960af0d7b4802c000800010d97"
+        "0af0d7b48022001a4369747269782d31"
+        "2e382e372e302027426c61636b20446f"
+        "7727424e80280004aea90559"))
+    msg = StunMessage.decode(msg_data)
+    print repr(msg[:-1])
+    for attribute in msg.attributes:
+        print repr(attribute)
