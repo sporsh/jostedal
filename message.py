@@ -55,6 +55,26 @@ class StunMessage(tuple):
         return tuple.__new__(cls, (msg_method, msg_class, msg_length,
                                    magic_cookie, transaction_id, attributes))
 
+    def encode(self):
+        msg_type = self.msg_method | self.msg_class << 4
+        attr_data = self.encode_attributes()
+        msg_length = len(attr_data)
+        data = struct.pack(self._HEADER_FORMAT, msg_type, msg_length, self.magic_cookie, self.transaction_id)
+        data += self.encode_attributes()
+        return data
+
+    def encode_attributes(self):
+        data = ''
+        for attribute in self.attributes:
+            attr_data = attribute.encode(self)
+            attr_length = len(attr_data)
+            data += struct.pack(StunMessageAttribute.HEADER_FORMAT,
+                               attribute.type, attr_length)
+            data += attr_data
+            padding = attr_length % 4
+            data += '\x00' * padding
+        return data
+
     @classmethod
     def decode(cls, data, offset=0, length=None):
         assert ord(data[offset]) >> 6 == FORMAT_STUN, \
@@ -114,15 +134,23 @@ class StunMessageAttribute(tuple):
         return tuple.__new__(self, (type_, length, value))
 
     @classmethod
+    def create(cls, value):
+        return cls(cls.TYPE, len(value), value)
+
+    def encode(self, message):
+        return self.value
+
+    @classmethod
     def decode(cls, data, offset, length):
-        return buffer(data, offset, length)
+#         return buffer(data, offset, length)
+        return data[offset:offset+length]
 
     def __str__(self):
         return "value={!r}".format(self.value)
 
     def __repr__(self, *args, **kwargs):
         return "{}(type={:#06x}, length={}, {})".format(
-            self.__class__.__name__, self.type, self.length, str(self))
+            type(self).__name__, self.type, self.length, str(self))
 
 
 class UnknownAttribute(StunMessageAttribute):
@@ -156,8 +184,12 @@ class MappedAddress(StunMessageAttribute):
     def decode(cls, data, offset, length):
         family, port = struct.unpack_from(cls._VALUE_HEADER_FORMAT, data, offset)
         offset += cls._VALUE_HEADER_SIZE
-        address = buffer(data, offset, length - cls._VALUE_HEADER_SIZE)
+        address = bytearray(buffer(data, offset, length - cls._VALUE_HEADER_SIZE))
         return (family, port, address)
+
+    def encode(self, message):
+        family, port, address = self.value
+        return struct.pack(self._VALUE_HEADER_FORMAT, family, port) + str(address)
 
     def __str__(self):
         family, port, address = self.value
@@ -187,6 +219,14 @@ class XorMappedAddress(MappedAddress):
 
         return (family, port, address)
 
+    def encode(self, message):
+        family, port, address = self.value
+        xport = port ^ (message.magic_cookie >> 16)
+        magic = bytearray(struct.pack('!L12s', message.magic_cookie, message.transaction_id))
+        xaddress = bytearray(a ^ b for a, b in zip(address, magic))
+        return struct.pack(self._VALUE_HEADER_FORMAT, family, xport) + xaddress
+
+
 
 @stunattribute(ATTRIBUTE_USERNAME)
 class Username(StunMessageAttribute):
@@ -195,7 +235,10 @@ class Username(StunMessageAttribute):
     """
     @classmethod
     def decode(cls, data, offset, length):
-        return str(buffer(data, offset, length)).decode('UTF-8')
+        return str(buffer(data, offset, length)).decode('utf8')
+
+    def encode(self, message):
+        return self.value.encode('utf8')
 
 
 @stunattribute(ATTRIBUTE_MESSAGE_INTEGRITY)
@@ -228,7 +271,7 @@ class ErrorCode(StunMessageAttribute):
     def decode(cls, data, offset, length):
         err_class, err_number = struct.unpack_from(cls._VALUE_HEADER_FORMAT, data, offset)
         err_class &= 0b111
-        err_reason = str(buffer(data, offset, length)).decode('UTF-8')
+        err_reason = str(buffer(data, offset, length)).decode('utf8')
         return (err_class, err_number, err_reason)
 
     def __str__(self):
@@ -242,7 +285,7 @@ class Realm(StunMessageAttribute):
     """
     @classmethod
     def decode(cls, data, offset, length):
-        return str(buffer(data, offset, length)).decode('UTF-8')
+        return str(buffer(data, offset, length)).decode('utf8')
 
 
 @stunattribute(ATTRIBUTE_NONCE)
@@ -268,9 +311,12 @@ class Software(StunMessageAttribute):
     """STUN SOFTWARE attribute
     :see: http://tools.ietf.org/html/rfc5389#section-15.10
     """
+    def encode(self, message):
+        return self.value.encode('utf8')
+
     @classmethod
     def decode(cls, data, offset, length):
-        return str(buffer(data, offset, length)).decode('UTF-8')
+        return str(buffer(data, offset, length)).decode('utf8')
 
 
 @stunattribute(ATTRIBUTE_ALTERNATE_SERVER)
@@ -424,7 +470,15 @@ if __name__ == '__main__':
         "0af0d7b48022001a4369747269782d31"
         "2e382e372e302027426c61636b20446f"
         "7727424e80280004aea90559"))
+#     msg_data = bytearray('\x01\x01\x000!\x12\xa4B\xf1\x9b\'\xa4\xac^\xe3v\x16}\xdef\x80"\x00\x16TANDBERG/4120 (X7.2.2)\x00\x00\x00 \x00\x08\x00\x01M\xae\x0f\x01\xb0 \x80(\x00\x04\x15p\x96\xbd')
+#     msg_data = bytearray('\x01\x01\x000!\x12\xa4B\x0ef\xc5\xedT\x1c8\xeb\xa7\xaa\xcf:\x80"\x00\x16TANDBERG/4120 (X7.2.2)\x00\x00\x00 \x00\x08\x00\x01\xa5Z\x0f\x01\xb0 \x80(\x00\x04\xf5\xe6\x9b\xfb')
     msg = StunMessage.decode(msg_data)
     print repr(msg[:-1])
     for attribute in msg.attributes:
         print repr(attribute)
+
+    print str(msg_data).encode('hex')
+    print str(msg.encode()).encode('hex')
+
+    msg2 = StunMessage.decode(str(msg.encode()))
+    print repr(msg2[:-1])
