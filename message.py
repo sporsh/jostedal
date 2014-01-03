@@ -5,6 +5,7 @@
 import struct
 import socket
 from operator import itemgetter
+from binascii import crc32
 
 
 # Comprehension-required range (0x0000-0x7FFF):
@@ -34,6 +35,21 @@ CLASS_RESPONSE_SUCCESS =    0x10
 CLASS_RESPONSE_ERROR =      0x11
 
 
+FAMILY_IPv4 = 0x01
+FAMILY_IPv6 = 0x02
+_FAMILY_TO_AF_INET = {FAMILY_IPv4: socket.AF_INET,
+                      FAMILY_IPv6: socket.AF_INET6}
+_AF_INET_TO_FAMILY = {socket.AF_INET: FAMILY_IPv4,
+                      socket.AF_INET6: FAMILY_IPv6}
+# Convert to/from STUN FAMILY and AF_INET
+ftoaf = _FAMILY_TO_AF_INET.get
+aftof = _AF_INET_TO_FAMILY.get
+
+
+def pad(length):
+    return (4 - (length % 4)) % 4
+
+
 class StunMessage(tuple):
     """STUN message structure
     :see: http://tools.ietf.org/html/rfc5389#section-6
@@ -57,22 +73,20 @@ class StunMessage(tuple):
 
     def encode(self):
         msg_type = self.msg_method | self.msg_class << 4
-        attr_data = self.encode_attributes()
-        msg_length = len(attr_data)
-        data = struct.pack(self._HEADER_FORMAT, msg_type, msg_length, self.magic_cookie, self.transaction_id)
-        data += self.encode_attributes()
+        length = sum(len(attribute) for attribute in self.attributes)
+        data = bytearray(struct.pack(self._HEADER_FORMAT, msg_type, length,
+                                     self.magic_cookie, self.transaction_id))
+        self.encode_attributes(data)
         return data
 
-    def encode_attributes(self):
-        data = ''
+    def encode_attributes(self, data):
         for attribute in self.attributes:
-            attr_data = attribute.encode(self)
+            attr_data = attribute.encode(data)
             attr_length = len(attr_data)
-            data += struct.pack(StunMessageAttribute.HEADER_FORMAT,
-                               attribute.type, attr_length)
-            data += attr_data
-            padding = attr_length % 4
-            data += '\x00' * padding
+            data.extend(struct.pack(StunMessageAttribute.HEADER_FORMAT,
+                                    attribute.type, attr_length))
+            data.extend(attr_data)
+            data.extend('\x00' * pad(attr_length))
         return data
 
     @classmethod
@@ -99,8 +113,8 @@ class StunMessage(tuple):
             factory = cls._ATTRIBUTE_FACTORIES.get(attr_type, UnknownAttribute)
             attr_value = factory.decode(data, offset, attr_length)
             yield factory(attr_type, attr_length, attr_value)
-            padding = attr_length % 4
-            offset += attr_length + padding
+            pad_length = pad(attr_length)
+            offset += attr_length + pad_length
 
     @classmethod
     def add_attribute_factory(cls, attr_type, factory):
@@ -112,9 +126,9 @@ class StunMessage(tuple):
         return self._HEADER_SIZE + self.msg_length
 
     def __repr__(self):
-        return ("{}(method={:#05x}, class={:#04x}, length={}, magic_cookie={:#010x}, "
-                "transaction_id={}, attributes={})".format(type(self),
-                    self.msg_method, self.msg_class, self.msg_length,
+        return ("{}(method={:#05x}, class={:#04x}, length={}, "
+                "magic_cookie={:#010x}, transaction_id={}, attributes={})".format(
+                    type(self), self.msg_method, self.msg_class, self.msg_length,
                     self.magic_cookie, self.transaction_id.encode('hex'),
                     self.attributes))
 
@@ -137,13 +151,16 @@ class StunMessageAttribute(tuple):
     def create(cls, value):
         return cls(cls.TYPE, len(value), value)
 
-    def encode(self, message):
+    def encode(self, data):
         return self.value
 
     @classmethod
     def decode(cls, data, offset, length):
 #         return buffer(data, offset, length)
         return data[offset:offset+length]
+
+    def __len__(self):
+        return self.HEADER_SIZE + self.length + pad(self.length)
 
     def __str__(self):
         return "value={!r}".format(self.value)
@@ -172,29 +189,25 @@ class MappedAddress(StunMessageAttribute):
     """STUN MAPPED-ADDRESS attribute
     :see: http://tools.ietf.org/html/rfc5389#section-15.1
     """
-    FAMILY_IPv4 = 0x01
-    FAMILY_IPv6 = 0x02
-    _FAMILY_MAP = {FAMILY_IPv4: socket.AF_INET,
-               FAMILY_IPv6: socket.AF_INET6}
+    _VALUE_FORMAT = '>xBH'
+    _VALUE_SIZE = struct.calcsize(_VALUE_FORMAT)
 
-    _VALUE_HEADER_FORMAT = '>xBH'
-    _VALUE_HEADER_SIZE = struct.calcsize(_VALUE_HEADER_FORMAT)
 
     @classmethod
     def decode(cls, data, offset, length):
-        family, port = struct.unpack_from(cls._VALUE_HEADER_FORMAT, data, offset)
-        offset += cls._VALUE_HEADER_SIZE
-        address = bytearray(buffer(data, offset, length - cls._VALUE_HEADER_SIZE))
+        family, port = struct.unpack_from(cls._VALUE_FORMAT, data, offset)
+        offset += cls._VALUE_SIZE
+        address = buffer(data, offset, length - cls._VALUE_SIZE)
+        address = socket.inet_ntop(ftoaf(family), address)
         return (family, port, address)
 
-    def encode(self, message):
+    def encode(self, data):
         family, port, address = self.value
-        return struct.pack(self._VALUE_HEADER_FORMAT, family, port) + str(address)
+        address = bytearray(socket.inet_pton(ftoaf(family), address))
+        return struct.pack(self._VALUE_FORMAT, family, port) + address
 
     def __str__(self):
-        family, port, address = self.value
-        ipaddr = socket.inet_ntop(self._FAMILY_MAP[family], buffer(address))
-        return "family={:#04x}, port={}, address={!r}".format(family, port, ipaddr)
+        return "family={:#04x}, port={}, address={!r}".format(*self.value)
 
 
 @stunattribute(ATTRIBUTE_XOR_MAPPED_ADDRESS)
@@ -204,11 +217,11 @@ class XorMappedAddress(MappedAddress):
     """
     @classmethod
     def decode(cls, data, offset, length):
-        family, xport = struct.unpack_from(cls._VALUE_HEADER_FORMAT, data, offset)
-        offset += cls._VALUE_HEADER_SIZE
-        if family == cls.FAMILY_IPv4:
+        family, xport = struct.unpack_from(cls._VALUE_FORMAT, data, offset)
+        offset += cls._VALUE_SIZE
+        if family == FAMILY_IPv4:
             xaddress = buffer(data, offset, 4)
-        elif family == cls.FAMILY_IPv6:
+        elif family == FAMILY_IPv6:
             xaddress = buffer(data, offset, 16)
 
         # xport and xaddress are xored with the concatination of
@@ -216,15 +229,17 @@ class XorMappedAddress(MappedAddress):
         magic = bytearray(*struct.unpack_from('>16s', data, 4))
         port = xport ^ magic[0] << 8 ^ magic[1]
         address = bytearray(ord(a) ^ b for a, b in zip(xaddress, magic))
+        address = socket.inet_ntop(ftoaf(family), buffer(address))
 
         return (family, port, address)
 
-    def encode(self, message):
+    def encode(self, data):
+        magic = bytearray(*struct.unpack_from('>16s', data, 4))
         family, port, address = self.value
-        xport = port ^ (message.magic_cookie >> 16)
-        magic = bytearray(struct.pack('!L12s', message.magic_cookie, message.transaction_id))
+        xport = port ^ magic[0] << 8 ^ magic[1]
+        address = bytearray(socket.inet_pton(ftoaf(family), address))
         xaddress = bytearray(a ^ b for a, b in zip(address, magic))
-        return struct.pack(self._VALUE_HEADER_FORMAT, family, xport) + xaddress
+        return struct.pack(self._VALUE_FORMAT, family, xport) + xaddress
 
 
 
@@ -237,7 +252,7 @@ class Username(StunMessageAttribute):
     def decode(cls, data, offset, length):
         return str(buffer(data, offset, length)).decode('utf8')
 
-    def encode(self, message):
+    def encode(self, data):
         return self.value.encode('utf8')
 
 
@@ -254,9 +269,17 @@ class Fingerprint(StunMessageAttribute):
     :see: http://tools.ietf.org/html/rfc5389#section-15.5
     """
     MAGIC = 0x5354554e
+    _VALUE_FORMAT = '>L'
+    _VALUE_SIZE = struct.calcsize(_VALUE_FORMAT)
 
-    def __str__(self):
-        return str(self.value).encode('hex')
+    def encode(self, data):
+        fingerprint = (crc32(data) & 0xffffffff) ^ self.MAGIC
+        return struct.pack(self._VALUE_FORMAT, fingerprint)
+
+    @classmethod
+    def decode(cls, data, offset, length):
+        fingerprint, = struct.unpack_from(cls._VALUE_FORMAT, data, offset)
+        return fingerprint
 
 
 @stunattribute(ATTRIBUTE_ERROR_CODE)
@@ -264,12 +287,12 @@ class ErrorCode(StunMessageAttribute):
     """STUN ERROR-CODE attribute
     :see: http://tools.ietf.org/html/rfc5389#section-15.6
     """
-    _VALUE_HEADER_FORMAT = '>2x2B'
-    _VALUE_HEADER_SIZE = struct.calcsize(_VALUE_HEADER_FORMAT)
+    _VALUE_FORMAT = '>2x2B'
+    _VALUE_SIZE = struct.calcsize(_VALUE_FORMAT)
 
     @classmethod
     def decode(cls, data, offset, length):
-        err_class, err_number = struct.unpack_from(cls._VALUE_HEADER_FORMAT, data, offset)
+        err_class, err_number = struct.unpack_from(cls._VALUE_FORMAT, data, offset)
         err_class &= 0b111
         err_reason = str(buffer(data, offset, length)).decode('utf8')
         return (err_class, err_number, err_reason)
@@ -311,7 +334,7 @@ class Software(StunMessageAttribute):
     """STUN SOFTWARE attribute
     :see: http://tools.ietf.org/html/rfc5389#section-15.10
     """
-    def encode(self, message):
+    def encode(self, data):
         return self.value.encode('utf8')
 
     @classmethod
@@ -469,11 +492,11 @@ if __name__ == '__main__':
         "00010d960af0d7b4802c000800010d97"
         "0af0d7b48022001a4369747269782d31"
         "2e382e372e302027426c61636b20446f"
-        "7727424e80280004aea90559"))
-#     msg_data = bytearray('\x01\x01\x000!\x12\xa4B\xf1\x9b\'\xa4\xac^\xe3v\x16}\xdef\x80"\x00\x16TANDBERG/4120 (X7.2.2)\x00\x00\x00 \x00\x08\x00\x01M\xae\x0f\x01\xb0 \x80(\x00\x04\x15p\x96\xbd')
-#     msg_data = bytearray('\x01\x01\x000!\x12\xa4B\x0ef\xc5\xedT\x1c8\xeb\xa7\xaa\xcf:\x80"\x00\x16TANDBERG/4120 (X7.2.2)\x00\x00\x00 \x00\x08\x00\x01\xa5Z\x0f\x01\xb0 \x80(\x00\x04\xf5\xe6\x9b\xfb')
+        "7727000080280004fd824449"))
+    msg_data = '\x01\x01\x000!\x12\xa4B\xf1\x9b\'\xa4\xac^\xe3v\x16}\xdef\x80"\x00\x16TANDBERG/4120 (X7.2.2)\x00\x00\x00 \x00\x08\x00\x01M\xae\x0f\x01\xb0 \x80(\x00\x04\x15p\x96\xbd'
+    msg_data = '\x01\x01\x000!\x12\xa4B\x0ef\xc5\xedT\x1c8\xeb\xa7\xaa\xcf:\x80"\x00\x16TANDBERG/4120 (X7.2.2)\x00\x00\x00 \x00\x08\x00\x01\xa5Z\x0f\x01\xb0 \x80(\x00\x04\xf5\xe6\x9b\xfb'
     msg = StunMessage.decode(msg_data)
-    print repr(msg[:-1])
+    print msg#repr(msg[:-1])
     for attribute in msg.attributes:
         print repr(attribute)
 
@@ -481,4 +504,6 @@ if __name__ == '__main__':
     print str(msg.encode()).encode('hex')
 
     msg2 = StunMessage.decode(str(msg.encode()))
-    print repr(msg2[:-1])
+    print msg2#repr(msg2[:-1])
+
+    assert msg == msg2
