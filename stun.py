@@ -1,8 +1,7 @@
-from message import StunMessage, METHOD_BINDING, CLASS_REQUEST, MAGIC_COOKIE,\
-    Software, XorMappedAddress, aftof, CLASS_RESPONSE_SUCCESS,\
-    CLASS_RESPONSE_ERROR, UnknownAttributes
+from message import StunMessage, METHOD_BINDING, CLASS_REQUEST, aftof, CLASS_RESPONSE_SUCCESS,\
+    CLASS_RESPONSE_ERROR, UnknownAttributes, ATTRIBUTE_SOFTWARE,\
+    ATTRIBUTE_XOR_MAPPED_ADDRESS
 from twisted.internet.protocol import DatagramProtocol
-import os
 
 AGENT_NAME = "PexSTUN Agent"
 
@@ -22,19 +21,17 @@ class StunBindingTransaction(object):
 
         #error
         response_class = CLASS_RESPONSE_ERROR
-        attributes.append(UnknownAttributes.create([])) #TODO: list of unknown attrs in message
+        attributes.append(UnknownAttributes, ([],)) #TODO: list of unknown attrs in message
 
         #success
-        attributes.append(XorMappedAddress.create((aftof(family), port, host)))
+        attributes.append((ATTRIBUTE_XOR_MAPPED_ADDRESS, 0, (aftof(family), port, host)))
         response_class = CLASS_RESPONSE_SUCCESS
 
-        length = sum(len(attribute) for attribute in attributes)
-        response = StunMessage(message.method,
-                               response_class,
-                               length,
-                               MAGIC_COOKIE,
-                               message.transaction_id,
-                               attributes)
+        response = StunMessage.encode(message.method,
+                                      response_class,
+                                      message.transaction_id,
+                                      attributes=attributes)
+        return response
 
     def handle_INDICATION(self, message):
         """
@@ -109,10 +106,10 @@ class StunUdpClient(StunUdpProtocol):
         """
         attributes = []
         if software:
-            attributes.append(Software.create(software))
-        length = sum(len(attribute) for attribute in attributes)
-        transaction_id = os.urandom(12)
-        message = StunMessage(METHOD_BINDING, CLASS_REQUEST, length, MAGIC_COOKIE, transaction_id, attributes)
+            attributes.append((ATTRIBUTE_SOFTWARE, 0, software))
+        message = StunMessage(METHOD_BINDING, CLASS_REQUEST,
+                              attributes=attributes)
+        print repr(message)
         self.transport.write(message.encode(), (host, port))
 
 
@@ -128,8 +125,9 @@ if __name__ == '__main__':
     from twisted.internet import reactor
     stun_client = StunUdpClient()
     port = reactor.listenUDP(0, stun_client)
-    stun_client.request_BINDING('46.19.20.100', 3478, software='')
+    stun_client.request_BINDING('46.19.20.100', 3478)
 #     stun_client.request_BINDING('8.34.221.6', 3478)
+
 #     stun_client.request_BINDING('localhost', 6666)
     reactor.callLater(5, reactor.stop)
     reactor.run()
