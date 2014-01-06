@@ -47,6 +47,8 @@ aftof = _AF_INET_TO_FAMILY.get
 
 
 def pad(length):
+    """Calculates the number of padding bytes required to align to a 4 byte boundary
+    """
     return (4 - (length % 4)) % 4
 
 
@@ -86,8 +88,24 @@ class StunMessage(tuple):
             data.extend(struct.pack(StunMessageAttribute.HEADER_FORMAT,
                                     attribute.type, attr_length))
             data.extend(attr_data)
-            data.extend('\x00' * pad(attr_length))
+            data.extend(bytearray(pad(attr_length)))
         return data
+
+    @classmethod
+    def encode_(cls, msg_method, msg_class, transaction_id, attributes, magic_cookie=MAGIC_COOKIE):
+        msg_length = 0
+        msg_type = msg_method | msg_class << 4
+        data = bytearray(struct.pack(cls._HEADER_FORMAT,
+                                     msg_type,
+                                     msg_length,
+                                     magic_cookie,
+                                     transaction_id))
+        for attr_type, value in attributes:
+            offset = len(data)
+            attr_type.encode_(data, offset, value)
+
+        return data
+#         return cls(msg_method, msg_class, msg_length, transaction_id, magic_cookie, attrs)
 
     @classmethod
     def decode(cls, data, offset=0, length=None):
@@ -155,6 +173,15 @@ class StunMessageAttribute(tuple):
         return self.value
 
     @classmethod
+    def encode_(cls, data, offset, attr_data):
+        attr_length = len(attr_data)
+        data.extend(struct.pack(cls.HEADER_FORMAT, cls.TYPE, attr_length))
+        offset += cls.HEADER_SIZE
+        data.extend(attr_data)
+        # Update length
+        struct.pack_into('>H', data, 2, len(data) - StunMessage._HEADER_SIZE)
+
+    @classmethod
     def decode(cls, data, offset, length):
 #         return buffer(data, offset, length)
         return data[offset:offset+length]
@@ -200,6 +227,13 @@ class MappedAddress(StunMessageAttribute):
         address = buffer(data, offset, length - cls._VALUE_SIZE)
         address = socket.inet_ntop(ftoaf(family), address)
         return (family, port, address)
+
+    @classmethod
+    def encode_(cls, data, offset, value):
+        family, port, address = value
+        address = socket.inet_pton(ftoaf(family), address)
+        attr_value = struct.pack(cls._VALUE_FORMAT, family, port) + address
+        return super(MappedAddress, cls).encode_(data, offset, attr_value)
 
     def encode(self, data):
         family, port, address = self.value
@@ -275,6 +309,12 @@ class Fingerprint(StunMessageAttribute):
     def encode(self, data):
         fingerprint = (crc32(data) & 0xffffffff) ^ self.MAGIC
         return struct.pack(self._VALUE_FORMAT, fingerprint)
+
+    @classmethod
+    def encode_(cls, data, offset, value):
+        fingerprint = (crc32(data) & 0xffffffff) ^ cls.MAGIC
+        attr_value = struct.pack(cls._VALUE_FORMAT, fingerprint)
+        return super(Fingerprint, cls).encode_(data, offset, attr_value)
 
     @classmethod
     def decode(cls, data, offset, length):
@@ -507,3 +547,11 @@ if __name__ == '__main__':
     print msg2#repr(msg2[:-1])
 
     assert msg == msg2
+
+    msg3 = StunMessage.encode_(METHOD_BINDING, CLASS_REQUEST, str(bytearray(12)),
+                               [(Software, "Test"),
+                                (MappedAddress, (FAMILY_IPv4, 6666, '127.0.0.1')),
+                                (Fingerprint, ())
+                                ])
+    print repr(msg3)
+    print StunMessage.decode(str(msg3))
