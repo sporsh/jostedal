@@ -463,6 +463,8 @@ class RequestedTransport(StunMessageAttribute):
     """TURN STUN REQUESTED-TRANSPORT attribute
     :see: http://tools.ietf.org/html/rfc5766#section-14.7
     """
+    UDP = 0x11
+
     @classmethod
     def decode(cls, data, offset, length):
         protocol, = struct.unpack_from('>B3x', data, offset)

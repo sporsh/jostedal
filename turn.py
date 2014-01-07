@@ -2,7 +2,7 @@ from twisted.internet.protocol import Protocol
 from message import RequestedTransport, Lifetime, EvenPort,\
     ATTRIBUTE_REQUESTED_TRANSPORT, ATTRIBUTE_RESERVATION_TOKEN,\
     ATTRIBUTE_EVEN_PORT, ATTRIBUTE_LIFETIME, XorRelayedAddress,\
-    XorMappedAddress
+    XorMappedAddress, StunMessage
 
 
 class StunState(object):
@@ -12,7 +12,9 @@ class StunState(object):
         #self.dispatchMessage(message)
 
 
-class StunAllocation(object):
+class Allocation(object):
+    """Server side allocation
+    """
     relay_transport_address = None
 
     # 5-tuple
@@ -20,25 +22,40 @@ class StunAllocation(object):
     client_port = None
     server_address = None
     server_port = None
-    protocol = None
+    transport_protocol = None
 
     # Authentication information
-    username = None
-    password = None
-    realm = None
+#     username = None
+#     password = None
+#     realm = None
+    userrealmpass = md5('{}:{}:{}'.format(username, realm, password))
     nonce = None
 
-    time_to_expiry = None
-    permissions = []
+    time_to_expiry = 10*60
+    permissions = [(ipaddr, lifetime)]
     channel_to_peer_bindings = []
 
+    class Authenticating(): pass
+    class Open(): pass
+    class Expired(): pass
+
+
+class AllocateTransaction(object):
+    """Client side transaction for a allocation
+    """
+    def __init__(self):
+        pass
+
+    class StateClosed(object):
+        pass
+    class StateOpening(object):
+        pass
+    class StateOpen(object):
+        LIFETIME = 10*60
+        pass
 
 class AllocateRequest(object):
-    TRANSPORT_UDP = 'udp'
-    TRANSPORT_TCP = 'tcp'
-    TRANSPORT_TLS = 'tls'
-
-    def __init__(self, transport_protocol=TRANSPORT_UDP):
+    def __init__(self, transport_protocol=RequestedTransport.UDP):
         host_transport_address = self._get_transport_address()
         self.transport_protocol = transport_protocol
 
@@ -47,18 +64,18 @@ class StunClient(object):
     def __init__(self, server):
         self.turn_server_domain_name = None
 
-    def send_ALLOCATE_REQUEST(self, transport_protocol=TRANSPORT_UDP,
+    def send_ALLOCATE_REQUEST(self, transport_protocol=RequestedTransport.UDP,
                                 time_to_expiry=None,
                                 dont_fragment=False,
                                 even_port=None,
                                 reservation_token=None):
         """
+        :param even_port: None | 0 | 1 (1==reserve next highest port number)
         :see: http://tools.ietf.org/html/rfc5766#section-6.1
         """
-        attributes = []
+        attributes = [RequestedTransport(transport_protocol)]
         host_transport_address = self.get_host_transport_address()
         server_transport_address = self.get_server_transport_address()
-        attributes.append(RequestedTransport(RequestedTransport.UDP))
         if time_to_expiry:
             attributes.append(Lifetime())
         if dont_fragment:
@@ -67,6 +84,10 @@ class StunClient(object):
             attributes.append(EvenPort(R=even_port))
         if reservation_token:
             attributes.append(ReservationToken())
+
+        StunMessage(METHOD_ALLOCATE,
+                    CLASS_REQUEST,
+                    attributes=attributes)
 
     def get_host_transport_address(self):
         pass
