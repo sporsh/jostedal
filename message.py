@@ -86,7 +86,7 @@ class StunMessage(tuple):
                                      self.magic_cookie,
                                      self.transaction_id))
         for attr_type, attr_length, value in self.attributes:
-            factory = self._ATTRIBUTE_FACTORIES.get(attr_type)
+            factory = self._ATTRIBUTE_FACTORIES.get(attr_type, StunMessageAttribute)
             attr_data = factory.encode(data, value)
             attr_length = len(attr_data)
             data.extend(struct.pack(self._ATTR_HEADER_FORMAT,
@@ -125,6 +125,10 @@ class StunMessage(tuple):
             yield factory(attr_type, attr_length, attr_value)
             offset += attr_length + pad(attr_length)
 
+    def get_unknown_attributes(self):
+        return tuple(attribute for attribute in self.attributes if
+                     attribute.required and isinstance(attribute, UnknownAttribute))
+
     @classmethod
     def add_attribute_factory(cls, attr_type, factory):
         assert not cls._ATTRIBUTE_FACTORIES.get(attr_type, False), \
@@ -153,7 +157,9 @@ class StunMessageAttribute(tuple):
     length = property(itemgetter(1))
     value = property(itemgetter(2))
 
+
     def __new__(self, type_, length, value):
+        self.required = type_ < 0x8000
         return tuple.__new__(self, (type_, length, value))
 
     @classmethod
@@ -268,6 +274,16 @@ class MessageIntegrity(StunMessageAttribute):
     """STUN MESSAGE-INTEGRITY attribute
     :see: http://tools.ietf.org/html/rfc5389#section-15.4
     """
+    @classmethod
+    def encode(cls, data, value):
+        # long-term key
+        key = md5('{}:{}:{}'.format(username, realm, password))
+        # short-term key
+        key = saslprep(password)
+
+        # Checksum covers the 'length' value, so it needs to be updated first
+        length = len(data) + cls._VALUE_SIZE + cls.HEADER_SIZE - StunMessage._HEADER_SIZE
+        struct.pack_into('>H', data, 2, length)
 
 
 @stunattribute(ATTRIBUTE_FINGERPRINT)
@@ -309,6 +325,13 @@ class ErrorCode(StunMessageAttribute):
         err_reason = str(buffer(data, offset, length)).decode('utf8')
         return (err_class, err_number, err_reason)
 
+    @classmethod
+    def encode(cls, data, value):
+        err_class, err_number, err_reason = value
+        attr_data = struct.pack(cls._VALUE_FORMAT, err_class, err_number)
+        attr_data += err_reason.encode('utf8')
+        return attr_data
+
     def __str__(self):
         return "code={:1d}{:02d}, reason={!r}".format(*self)
 
@@ -321,6 +344,10 @@ class Realm(StunMessageAttribute):
     @classmethod
     def decode(cls, data, offset, length):
         return str(buffer(data, offset, length)).decode('utf8')
+
+    @classmethod
+    def encode(cls, data, value):
+        return value.encode('utf8')
 
 
 @stunattribute(ATTRIBUTE_NONCE)
@@ -339,6 +366,11 @@ class UnknownAttributes(StunMessageAttribute):
     def decode(cls, data, offset, length):
         fmt = '>{}H'.format(length / 2)
         return struct.unpack_from(fmt, data, offset)
+
+    @classmethod
+    def encode(cls, data, value):
+        num = len(value)
+        return struct.pack('>{}H'.format(num), *value)
 
 
 @stunattribute(ATTRIBUTE_SOFTWARE)
