@@ -1,26 +1,26 @@
-from message import StunMessage, METHOD_BINDING, CLASS_REQUEST, aftof, CLASS_RESPONSE_SUCCESS,\
-    CLASS_RESPONSE_ERROR, UnknownAttributes, ATTRIBUTE_SOFTWARE,\
-    ATTRIBUTE_XOR_MAPPED_ADDRESS, CLASS_INDICATION,\
-    ATTRIBUTE_UNKNOWN_ATTRIBUTES, ATTRIBUTE_FINGERPRINT
 from twisted.internet.protocol import DatagramProtocol
 from pexice.rfc5389_attributes import ATTRIBUTE_ERROR_CODE
+from message import CLASS_INDICATION, CLASS_RESPONSE_SUCCESS,\
+    CLASS_RESPONSE_ERROR, StunMessage, METHOD_BINDING, ATTR_SOFTWARE,\
+    ATTR_FINGERPRINT, CLASS_REQUEST, ATTR_UNKNOWN_ATTRIBUTES, aftof,\
+    ATTR_XOR_MAPPED_ADDRESS
 
 AGENT_NAME = "PexSTUN Agent"
 
 
 class StunBindingTransaction(object):
     _HANDLERS = {CLASS_INDICATION: 'handle_INDICATION',
-                CLASS_RESPONSE_SUCCESS: 'handle_RESPONSE_SUCCESS',
-                CLASS_RESPONSE_ERROR: 'handle_RESPONSE_ERROR'}
+                 CLASS_RESPONSE_SUCCESS: 'handle_RESPONSE_SUCCESS',
+                 CLASS_RESPONSE_ERROR: 'handle_RESPONSE_ERROR'}
 
     def __init__(self, agent, request):
         self.agent = agent
         self.messages = [request]
 
-    def messageReceived(self, message, addr):
-        handler_name = self._HANDLERS.get(message.msg_class)
+    def messageReceived(self, msg, addr):
+        handler_name = self._HANDLERS.get(msg.msg_class)
         handler = getattr(self, handler_name)
-        handler(message)
+        handler(msg)
 
     def handle_INDICATION(self, message):
         """
@@ -29,12 +29,12 @@ class StunBindingTransaction(object):
         # 1. check unknown comprehension-required attributes
         #    - discard
 
-    def handle_RESPONSE_SUCCESS(self, message):
+    def handle_RESPONSE_SUCCESS(self, msg):
         """
         :see: http://tools.ietf.org/html/rfc5389#section-7.3.3
         """
         # 0. check unknown comprehension-required (fail trans if present)
-        unknown_attributes = message.get_unknown_attributes()
+        unknown_attributes = msg.unknown_required_attributes()
         if unknown_attributes:
             #TODO: notify user about failure in success response
             print "BOOM, unknown required attribute", repr(unknown_attributes)
@@ -42,9 +42,9 @@ class StunBindingTransaction(object):
         # 1. check that XOR-MAPPED-ADDRESS is present
         # 2. check address family (ignore if unknown, may accept IPv6 when sent IPv4)
 
-        print "transaction succeeded", message
+        print "*** TRANSACTION SUCCEEDED"
 
-    def handle_RESPONSE_ERROR(self, message):
+    def handle_RESPONSE_ERROR(self, msg):
         """
         :see: http://tools.ietf.org/html/rfc5389#section-7.3.4
         """
@@ -55,7 +55,7 @@ class StunBindingTransaction(object):
         # error code 500 -> 599; MAY resend, but MUST limit number of retries
 
         #TODO: notify user about failure
-        print "Transaction failed", message
+        print "*** TRANSACTION FAILED"
 
 
 class StunAuthTransaction(object):
@@ -78,13 +78,13 @@ class StunUdpProtocol(DatagramProtocol):
         # 4. check that class is allowed for method
 
         try:
-            message = StunMessage.decode(datagram, 0)
+            msg = StunMessage.decode(datagram)
         except Exception as e:
             print "Failed to decode datagram:", e
         else:
-            if message:
-                print "message received", message
-                self.dispatchMessage(message, addr)
+            if msg:
+                print "*** RECEIVED", msg.format()
+                self.dispatchMessage(msg, addr)
 
 
 
@@ -99,20 +99,20 @@ class StunUdpClient(StunUdpProtocol):
         """
         :see: http://tools.ietf.org/html/rfc5389#section-7.1
         """
-        attributes = [(ATTRIBUTE_SOFTWARE, 0, software)] if software else []
-        message = StunMessage(METHOD_BINDING, CLASS_REQUEST,
-                              attributes=attributes)
-        self.transactions[message.transaction_id] = StunBindingTransaction(self, message)
-        print "sending message", StunMessage.decode(str(message.encode()))
-        self.transport.write(message.encode(), (host, port))
+        msg = StunMessage.encode(METHOD_BINDING, CLASS_REQUEST)
+        msg.add_attribute(ATTR_SOFTWARE, software)
+        msg.add_attribute(ATTR_FINGERPRINT)
+        self.transactions[msg.transaction_id] = StunBindingTransaction(self, msg)
+        print "*** SENDING", msg.format()
+        self.transport.write(msg, (host, port))
 
-    def dispatchMessage(self, message, addr):
+    def dispatchMessage(self, msg, addr):
                 # Dispatch message to transaction
-                transaction = self.transactions.get(message.transaction_id)
+                transaction = self.transactions.get(msg.transaction_id)
                 if transaction:
-                    transaction.messageReceived(message, addr)
+                    transaction.messageReceived(msg, addr)
                 else:
-                    print "No such transaction"
+                    print "*** NO SUCH TRANSACTION", msg.transaction_id.encode('hex')
 
 
 class StunUdpServer(StunUdpProtocol):
@@ -131,7 +131,7 @@ class StunUdpServer(StunUdpProtocol):
         """
         :see: http://tools.ietf.org/html/rfc5389#section-7.3.1
         """
-        attributes = [(ATTRIBUTE_SOFTWARE, 0, AGENT_NAME)]
+        attributes = [(ATTR_SOFTWARE, 0, AGENT_NAME)]
         # 1. check unknown comprehension-required attributes
         unknown_attributes = message.get_unknown_attributes()
         if unknown_attributes:
@@ -140,14 +140,14 @@ class StunUdpServer(StunUdpProtocol):
             response_class = CLASS_RESPONSE_ERROR
             attributes.append((ATTRIBUTE_ERROR_CODE, 0, (4, 20, "Unknown comprehension-required attributes")))
             unknown_attr_types = [attr.type for attr in unknown_attributes]
-            attributes.append((ATTRIBUTE_UNKNOWN_ATTRIBUTES, 0, unknown_attr_types))
+            attributes.append((ATTR_UNKNOWN_ATTRIBUTES, 0, unknown_attr_types))
         else:
             #success
             family = aftof(self.transport.addressFamily)
-            attributes.append((ATTRIBUTE_XOR_MAPPED_ADDRESS, 0, (family, port, host)))
+            attributes.append((ATTR_XOR_MAPPED_ADDRESS, 0, (family, port, host)))
             response_class = CLASS_RESPONSE_SUCCESS
 
-        attributes.append((ATTRIBUTE_FINGERPRINT, 0, 0))
+        attributes.append((ATTR_FINGERPRINT, 0, 0))
         response = StunMessage(message.msg_method,
                                response_class,
                                transaction_id=message.transaction_id,
