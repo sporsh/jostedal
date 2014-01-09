@@ -18,6 +18,7 @@ class BindingTransaction(defer.Deferred):
         defer.Deferred.__init__(self)
         request = stun.Message.encode(stun.METHOD_BINDING, stun.CLASS_REQUEST)
         request.add_attribute(stun.Software, agent.software)
+        agent.credential_mechanism.update(request)
         request.add_attribute(stun.Fingerprint)
 
         self.agent = agent
@@ -76,6 +77,7 @@ class StunUdpClient(StunUdpProtocol):
                                  retransmission_continue=retransmission_continue,
                                  retransmission_m=retransmission_m)
         self._transactions = {}
+        self.credential_mechanism = ShortTermCredentialMechanism('username', 'password')
 
     def bind(self, host, port):
         """
@@ -139,17 +141,48 @@ class StunUdpServer(StunUdpProtocol):
             self.transport.write(response, (host, port))
 
 
+class CredentialMechanism(object):
+    def update(self, message):
+        pass
+
+
+class ShortTermCredentialMechanism(CredentialMechanism):
+    """
+    :see: http://tools.ietf.org/html/rfc5389#section-10.1
+    """
+    def __init__(self, username, password):
+        self.username = username
+        self.hmac_key = stun.saslprep(password)
+
+    def update(self, msg):
+        msg.add_attribute(stun.Username, self.username)
+        msg.add_attribute(stun.MessageIntegrity, self.hmac_key)
+
+
+class LongTermCredentialMechanism(CredentialMechanism):
+    """
+    :see: http://tools.ietf.org/html/rfc5389#section-10.2
+    """
+    def __init__(self, nonce, realm, username, password):
+        self.nonce = nonce
+        self.realm = realm
+        self.hmac_key = stun.ha1(username, realm, password)
+
+    def update(self, msg):
+        msg.add_attribute(stun.Nonce, self.nonce)
+        msg.add_attribute(stun.Realm, self.realm)
+        msg.add_attribute(stun.MessageIntegrity, self.hmac_key)
 
 
 def main():
     from twisted.internet import reactor
 
-#     host, port = '23.251.129.121', 3478
+    host, port = '23.251.129.121', 3478
 #     host, port = '46.19.20.100', 3478
 #     host, port = '8.34.221.6', 3478
 
-    server = StunUdpServer()
-    host, port = 'localhost', server.start()
+#     server = StunUdpServer()
+#     host, port = 'localhost', server.start()
 
     client = StunUdpClient()
     client.start()

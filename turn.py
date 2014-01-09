@@ -39,14 +39,6 @@ ERR_ALLOCATION_QUOTA_REACHED =          4,86, "Allocation Quota Reached"
 ERR_INSUFFICIENT_CAPACITY =             5, 8, "Insufficient Capacity"
 
 
-def saslprep(string):
-    #TODO
-    return string
-
-def ha1(username, realm, password):
-    return hashlib.md5(':'.join((username, realm, saslprep(password)))).digest()
-
-
 @stun.attribute
 class ChannelNumber(stun.Attribute):
     """TURN STUN CHANNEL-NUMBER attribute

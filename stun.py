@@ -61,6 +61,14 @@ ERR_STALE_NONCE =       4,38, "Stale Nonce"
 ERR_SERVER_ERROR =      5, 0, "Server Error"
 
 
+def saslprep(string):
+    #TODO
+    return string
+
+def ha1(username, realm, password):
+    return hashlib.md5(':'.join((username, realm, saslprep(password)))).digest()
+
+
 class Message(bytearray):
     """STUN message structure
     :see: http://tools.ietf.org/html/rfc5389#section-6
