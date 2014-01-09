@@ -427,67 +427,6 @@ class Software(Attribute):
 #     :see: http://tools.ietf.org/html/rfc5389#section-15.11
 #     """
 
-# 
-# 
-# 
-# """NAT Behavior Discovery Using Session Traversal Utilities for NAT (STUN)
-# :see: http://tools.ietf.org/html/rfc5780
-# """
-# 
-# # Comprehension-required range (0x0000-0x7FFF):
-# ATTRIBUTE_CHANGE_REQUEST =    0x0003
-# ATTRIBUTE_PADDING =           0x0026
-# ATTRIBUTE_RESPONSE_PORT =     0x0027
-# # Comprehension-optional range (0x8000-0xFFFF):
-# ATTRIBUTE_RESPONSE_ORIGIN =   0x802b
-# ATTRIBUTE_OTHER_ADDRESS =     0x802c
-# 
-# 
-# @stunattribute(ATTRIBUTE_CHANGE_REQUEST)
-# class ChangeRequest(StunMessageAttribute):
-#     """
-#     :see: http://tools.ietf.org/html/rfc5780#section-7.2
-#     """
-#     @classmethod
-#     def decode(cls, data, offset, length):
-#         flags, = struct.unpack_from('>L', data, offset)
-#         change_ip =     flags & 0b0100
-#         change_port =   flags & 0b0010
-#         return (change_ip, change_port)
-# 
-# 
-# @stunattribute(ATTRIBUTE_RESPONSE_ORIGIN)
-# class ResponseOrigin(MappedAddress):
-#     """
-#     :see: http://tools.ietf.org/html/rfc5780#section-7.3
-#     """
-# 
-# 
-# @stunattribute(ATTRIBUTE_OTHER_ADDRESS)
-# class OtherAddress(MappedAddress):
-#     """
-#     :see: http://tools.ietf.org/html/rfc5780#section-7.4
-#     """
-# 
-# 
-# @stunattribute(ATTRIBUTE_RESPONSE_PORT)
-# class ResponsePort(StunMessageAttribute):
-#     """
-#     :see: http://tools.ietf.org/html/rfc5780#section-7.5
-#     """
-#     @classmethod
-#     def decode(cls, data, offset, length):
-#         port, = struct.unpack_from('>H2x', data, offset)
-#         return port
-# 
-# 
-# @stunattribute(ATTRIBUTE_PADDING)
-# class Padding(StunMessageAttribute):
-#     """
-#     :see: http://tools.ietf.org/html/rfc5780#section-7.6
-#     """
-
-
 
 if __name__ == '__main__':
     msg_data = str(bytearray.fromhex(
