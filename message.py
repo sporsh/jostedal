@@ -37,15 +37,6 @@ CLASS_RESPONSE_SUCCESS =    0x10
 CLASS_RESPONSE_ERROR =      0x11
 
 
-
-
-
-def pad(length):
-    """Calculates the number of padding bytes required to align to a 4 byte boundary
-    """
-    return (4 - (length % 4)) % 4
-
-
 class StunMessage(bytearray):
     """STUN message structure
     :see: http://tools.ietf.org/html/rfc5389#section-6
@@ -74,7 +65,7 @@ class StunMessage(bytearray):
         attr = self.get_attr_cls(attr_type).encode(self, *args, **kwargs)
         self.extend(Attribute.struct.pack(attr.type, len(attr)))
         self.extend(attr)
-        self.extend(os.urandom(pad(len(attr))))
+        self.extend(os.urandom(attr.padding))
         self._attributes.append(attr)
         #update length
         self.length = len(self) - self._struct.size
@@ -94,10 +85,10 @@ class StunMessage(bytearray):
         while offset < cls._struct.size + msg_length:
             attr_type, attr_length = Attribute.struct.unpack_from(data, offset)
             offset += Attribute.struct.size
-            attribute = cls.get_attr_cls(attr_type).decode(data, offset, attr_length)
-            msg._attributes.append(attribute)
-            offset += len(attribute)
-            offset += pad(len(attribute))
+            attr = cls.get_attr_cls(attr_type).decode(data, offset, attr_length)
+            msg._attributes.append(attr)
+            offset += len(attr)
+            offset += attr.padding
         return msg
 
     @classmethod
@@ -171,6 +162,13 @@ class Attribute(str):
     @classmethod
     def encode(cls, msg, data):
         return cls(data)
+
+    @property
+    def padding(self):
+        """Calculate number of padding bytes required to align to 4 byte boundary
+        """
+        return (4 - (len(self) % 4)) % 4
+
 
     def __str__(self):
         return "length={}, value={}".format(
