@@ -49,12 +49,12 @@ ATTR_FINGERPRINT =         0x8028, "FINGERPRINT"
 
 
 # Error codes (class, number) and recommended reason phrases:
-ERR_TRY_ALTERNATE =     3,00, "Try Alternate"
-ERR_BAD_REQUEST =       4,00, "Bad Request"
-ERR_UNAUTHORIZED =      4,01, "Unauthorized"
+ERR_TRY_ALTERNATE =     3, 0, "Try Alternate"
+ERR_BAD_REQUEST =       4, 0, "Bad Request"
+ERR_UNAUTHORIZED =      4, 1, "Unauthorized"
 ERR_UNKNOWN_ATTRIBUTE = 4,20, "Unknown Attribute"
 ERR_STALE_NONCE =       4,38, "Stale Nonce"
-ERR_SERVER_ERROR =      5,00, "Server Error"
+ERR_SERVER_ERROR =      5, 0, "Server Error"
 
 
 class Message(bytearray):
@@ -94,9 +94,16 @@ class Message(bytearray):
 
     @classmethod
     def decode(cls, data):
+        """
+        :see: http://tools.ietf.org/html/rfc5389#section-7.3.1
+        """
         assert ord(data[0]) >> 6 == MSG_STUN, \
             "Stun message MUST start with 0b00"
         msg_type, msg_length, magic_cookie, transaction_id = cls._struct.unpack_from(data)
+        assert magic_cookie == MAGIC_COOKIE, \
+            "Incorrect magic cookie ({:#x})".format(magic_cookie)
+        assert msg_length % 4 == 0, \
+            "Message not aliged to 4 byte boundary"
         msg_type &= 0x3fff               # 00111111 11111111
         msg_method = msg_type & 0xfeef   # ..111110 11101111
         msg_class = msg_type >> 4 & 0x11 # ..000001 00010000
@@ -333,7 +340,7 @@ class ErrorCode(Attribute):
         self.err_class = err_class
         self.err_number = err_number
         self.code = err_class * 10 + err_number
-        self.reason = reason.decode('utf8')
+        self.reason = str(reason).decode('utf8')
 
     @classmethod
     def decode(cls, data, offset, length):
@@ -392,7 +399,7 @@ class Realm(Attribute):
         return cls(realm.encode('utf8'))
 
     def __str__(self):
-        return repr(self.software)
+        return repr(self.realm)
 
 
 @attribute

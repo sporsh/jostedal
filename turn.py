@@ -1,8 +1,8 @@
 import stun
 import struct
 import hashlib
-from twisted.internet.protocol import Protocol
-from stun_agent import StunUdpClient
+from stun_agent import StunUdpClient, StunUdpServer
+from twisted.internet import defer
 
 
 MSG_CHANNEL = 0b01
@@ -28,6 +28,15 @@ ATTR_RESERVATION_TOKEN =   0x0022, "RESERVATION-TOKEN"
 
 
 TRANSPORT_UDP = 0x11
+
+
+# Error codes (class, number) and recommended reason phrases:
+ERR_FORBIDDEN =                         4, 3, "Forbidden"
+ERR_ALLOCATION_MISMATCH =               4,37, "Allocation Mismatch"
+ERR_WRONG_CREDENTIALS =                 4,41, "Wrong Credentials"
+ERR_UNSUPPORTED_TRANSPORT_PROTOCOL =    4,42, "Unsupported Transport Protocol"
+ERR_ALLOCATION_QUOTA_REACHED =          4,86, "Allocation Quota Reached"
+ERR_INSUFFICIENT_CAPACITY =             5, 8, "Insufficient Capacity"
 
 
 def saslprep(string):
@@ -157,52 +166,92 @@ class Allocation(object):
     class Expired(): pass
 
 
-class AllocateTransaction(object):
-    """Client side transaction for a allocation
+class AllocateTransaction(defer.Deferred):
     """
-    def __init__(self):
-        pass
+    :see: http://tools.ietf.org/html/rfc5766#section-6
+    """
+    def __init__(self, agent, transport, time_to_expiry,
+            dont_fragment, even_port, reservation_token):
+        defer.Deferred.__init__(self)
 
-    class StateClosed(object):
-        pass
-    class StateOpening(object):
-        pass
-    class StateOpen(object):
-        LIFETIME = 10*60
-        pass
+        request = stun.Message.encode(METHOD_ALLOCATE, stun.CLASS_REQUEST)
+        if time_to_expiry:
+            request.add_attr(ATTR_LIFETIME, time_to_expiry)
+        if dont_fragment:
+            request.add_attr(ATTR_DONT_FRAGMENT)
+        if even_port is not None and not reservation_token:
+            request.add_attr(ATTR_EVEN_PORT, even_port)
+        if reservation_token:
+            request.add_attr(ATTR_RESERVATION_TOKEN, even_port)
+
+        self.agent = agent
+        self.transaction_id = request.transaction_id
+        self.request = request
+
+    def message_received(self, msg, addr):
+        """
+        :see: http://tools.ietf.org/html/rfc5766#section-6.3 - 6.4
+        """
+        if msg.msg_method != METHOD_ALLOCATE:
+            # TODO: shoud transaction fail at this point?
+            return
+
+        if msg.msg_class == stun.CLASS_RESPONSE_SUCCESS:
+            self.callback(msg.format())
+        elif msg.msg_class == stun.CLASS_RESPONSE_ERROR:
+            self.errback(RuntimeError(msg.format()))
 
 
-class AllocateRequest(object):
-    def __init__(self, transport_protocol=TRANSPORT_UDP):
-        host_transport_address = self._get_transport_address()
-        self.transport_protocol = transport_protocol
+class RefreshTransaction(defer.Deferred):
+    """
+    :see: http://tools.ietf.org/html/rfc5766#section-7
+    """
+    def __init__(self, agent, time_to_expiry):
+        defer.Deferred.__init__(self)
+
+        request = stun.Message.encode(METHOD_ALLOCATE, stun.CLASS_REQUEST)
+        if time_to_expiry:
+            request.add_attr(ATTR_LIFETIME, time_to_expiry)
+
+        self.agent = agent
+        self.transaction_id = request.transaction_id
+        self.request = request
+
+    def message_received(self, msg, addr):
+        if msg.msg_method != METHOD_REFRESH:
+            # TODO: shoud transaction fail at this point?
+            return
+
+        if msg.msg_class == stun.CLASS_RESPONSE_SUCCESS:
+            self.callback(msg.format())
+        elif msg.msg_class == stun.CLASS_RESPONSE_ERROR:
+            # If time_to_expiry == 0 and error 437 (Allocation Mismatch)
+            # consider transaction a success
+            self.errback(msg.format())
 
 
 class TurnUdpClient(StunUdpClient):
-    def __init__(self, server):
+    def __init__(self, retransmission_timeout=3., retransmission_continue=7, retransmission_m=16):
+        StunUdpClient.__init__(self, retransmission_timeout=retransmission_timeout, retransmission_continue=retransmission_continue, retransmission_m=retransmission_m)
         self.turn_server_domain_name = None
 
-    def send_ALLOCATE_REQUEST(self, transport_protocol=TRANSPORT_UDP,
-                                time_to_expiry=None,
-                                dont_fragment=False,
-                                even_port=None,
-                                reservation_token=None):
+    def allocate(self, host, port, transport=TRANSPORT_UDP, time_to_expiry=None,
+        dont_fragment=False, even_port=None, reservation_token=None):
         """
         :param even_port: None | 0 | 1 (1==reserve next highest port number)
         :see: http://tools.ietf.org/html/rfc5766#section-6.1
         """
-        msg = stun.Message.encode(METHOD_ALLOCATE, stun.CLASS_REQUEST)
-        msg.add_attr(ATTR_REQUESTED_TRANSPORT, transport_protocol)
-        host_transport_address = self.get_host_transport_address()
-        server_transport_address = self.get_server_transport_address()
-        if time_to_expiry:
-            msg.add_attr(ATTR_LIFETIME, time_to_expiry)
-        if dont_fragment:
-            msg.add_attr(ATTR_DONT_FRAGMENT)
-        if even_port is not None and not reservation_token:
-            msg.add_attr(ATTR_EVEN_PORT, even_port)
-        if reservation_token:
-            msg.add_attr(ATTR_RESERVATION_TOKEN, even_port)
+        transaction = AllocateTransaction(self, transport, time_to_expiry,
+            dont_fragment, even_port, reservation_token)
+        self.transport.write(transaction.request, (host, port))
+        self._transactions[transaction.transaction_id] = transaction
+        transaction.addCallback(self.transaction_completed, transaction)
+
+        @transaction.addCallback
+        def allocation_succeeded(result):
+            return Allocation()
+
+        return transaction
 
     def get_host_transport_address(self):
         pass
@@ -210,33 +259,10 @@ class TurnUdpClient(StunUdpClient):
     def get_server_transport_address(self):
         pass #dns srv record of "turn" or "turns"
 
-    def handle_ALLOCATE_SUCCESS_RESPONSE(self, message):
-        """
-        :see: http://tools.ietf.org/html/rfc5766#section-6.3
-        """
-        pass
-
-    def handle_ALLOCATE_ERROR_RESPONSE(self, message):
-        """
-        :see: http://tools.ietf.org/html/rfc5766#section-6.4
-        """
-        pass
-
-    def send_ALLOCATE_REFRESH_REQUEST(self, message):
-        """
-        :see: http://tools.ietf.org/html/rfc5766#section-7.1
-        """
-        pass
 
 
-    def handle_ALLOCATE_REFRESH_RESPONSE(self, message):
-        """
-        :see: http://tools.ietf.org/html/rfc5766#section-7.3
-        """
-        pass
 
-
-class TurnUdpServer(object):
+class TurnUdpServer(StunUdpServer):
     max_lifetime = 3600
     default_lifetime = 600
 
@@ -309,5 +335,25 @@ class TurnUdpServer(object):
 
 
 if __name__ == '__main__':
+    from twisted.internet import reactor
+
+    host, port = '23.251.129.121', 3478
+
+#     server = TurnUdpServer()
+#     host, port = 'localhost', server.start()
+
     client = TurnUdpClient()
     client.start()
+
+    d = client.allocate(host, port)
+    @d.addCallback
+    def allocation_succeeded(allocation):
+        print "*** Allocation succeeded:", allocation
+    @d.addErrback
+    def allocation_failed(failure):
+        print "*** Allocation failed:", failure
+    @d.addBoth
+    def stop(result):
+        reactor.stop()
+
+    reactor.run()

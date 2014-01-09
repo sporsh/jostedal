@@ -1,65 +1,45 @@
 import stun
 from twisted.internet.protocol import DatagramProtocol
+from twisted.internet import defer
 
 
 AGENT_NAME = "PexICE-0.1.0 'Jostedal'"
 
 
-class BindingTransaction(object):
-    _HANDLERS = {stun.CLASS_INDICATION: 'handle_INDICATION',
-                 stun.CLASS_RESPONSE_SUCCESS: 'handle_RESPONSE_SUCCESS',
-                 stun.CLASS_RESPONSE_ERROR: 'handle_RESPONSE_ERROR'}
+class BindingTransaction(defer.Deferred):
+    def __init__(self, agent):
+        defer.Deferred.__init__(self)
+        request = stun.Message.encode(stun.METHOD_BINDING, stun.CLASS_REQUEST)
+        request.add_attribute(stun.Software, agent.software)
+        request.add_attribute(stun.Fingerprint)
 
-    def __init__(self, agent, request):
         self.agent = agent
-        self.messages = [request]
+        self.transaction_id = request.transaction_id
+        self.request = request
 
-    def messageReceived(self, msg, addr):
-        handler_name = self._HANDLERS.get(msg.msg_class)
-        handler = getattr(self, handler_name)
-        handler(msg)
-
-    def handle_INDICATION(self, message):
-        """
-        :see: http://tools.ietf.org/html/rfc5389#section-7.3.2
-        """
-        # 1. check unknown comprehension-required attributes
-        #    - discard
-
-    def handle_RESPONSE_SUCCESS(self, msg):
-        """
-        :see: http://tools.ietf.org/html/rfc5389#section-7.3.3
-        """
-        # 0. check unknown comprehension-required (fail trans if present)
-        unknown_attributes = msg.unknown_comp_required_attrs()
-        if unknown_attributes:
-            #TODO: notify user about failure in success response
-            print "*** ERROR: Unknown attributes in", msg.format()
+    def message_received(self, msg, addr):
+        if msg.msg_method != stun.METHOD_BINDING:
+            # TODO: shoud transaction fail at this point?
             return
-        # 1. check that XOR-MAPPED-ADDRESS is present
-        # 2. check address family (ignore if unknown, may accept IPv6 when sent IPv4)
 
-        print "*** TRANSACTION SUCCEEDED"
-
-    def handle_RESPONSE_ERROR(self, msg):
-        """
-        :see: http://tools.ietf.org/html/rfc5389#section-7.3.4
-        """
-        # 1. unknown comp-req or no ERROR-CODE: transaction simply failed
-        # 2. authentication provcessing (sec. 10)
-        # error code 300 -> 399; SHOULD fail unless ALTERNATE-SERVER (sec 11)
-        # error code 400 -> 499; transaction failed (420, UNKNOWN ATTRIBUTES contain info)
-        # error code 500 -> 599; MAY resend, but MUST limit number of retries
-
-        #TODO: notify user about failure
-        print "*** TRANSACTION FAILED"
-
-
-class AuthTransaction(object):
-    pass
+        if msg.msg_class == stun.CLASS_INDICATION:
+            pass
+        elif msg.msg_class == stun.CLASS_RESPONSE_ERROR:
+            # 1. unknown comp-req or no ERROR-CODE: transaction simply failed
+            # 2. authentication provcessing (sec. 10)
+            # error code 300 -> 399; SHOULD fail unless ALTERNATE-SERVER (sec 11)
+            # error code 400 -> 499; transaction failed (420, UNKNOWN ATTRIBUTES contain info)
+            # error code 500 -> 599; MAY resend, but MUST limit number of retries
+            self.errback(msg)
+        elif msg.msg_class == stun.CLASS_RESPONSE_SUCCESS:
+            # 1. check that XOR-MAPPED-ADDRESS is present
+            # 2. check address family (ignore if unknown, may accept IPv6 when sent IPv4)
+            self.callback(msg)
 
 
 class StunUdpProtocol(DatagramProtocol):
+    software = AGENT_NAME
+
     def __init__(self, retransmission_timeout=3., retransmission_continue=7, retransmission_m=16):
         self.retransmision_timeout = retransmission_timeout
         self.retransmission_continue = retransmission_continue
@@ -70,23 +50,14 @@ class StunUdpProtocol(DatagramProtocol):
         return port.port
 
     def datagramReceived(self, datagram, addr):
-        """
-        :see: http://tools.ietf.org/html/rfc5389#section-7.3
-        """
-        # 1. check that the two first bytes are 0b00
-        # 2. check magic cookie
-        # 3. check sensible message length
-        # 4. check method is supported
-        # 4. check that class is allowed for method
-
         try:
             msg = stun.Message.decode(datagram)
         except Exception as e:
             print "Failed to decode datagram:", e
+            raise
         else:
-            if msg:
-                print "***", self.__class__.__name__, "RECEIVED", msg.format()
-                self.dispatchMessage(msg, addr)
+            if isinstance(msg, stun.Message):
+                self.stun_message_received(msg, addr)
 
 
 class StunUdpClient(StunUdpProtocol):
@@ -96,25 +67,35 @@ class StunUdpClient(StunUdpProtocol):
         StunUdpProtocol.__init__(self, retransmission_timeout=retransmission_timeout,
                                  retransmission_continue=retransmission_continue,
                                  retransmission_m=retransmission_m)
-        self.transactions = {}
+        self._transactions = {}
 
-    def request_BINDING(self, host, port, software=AGENT_NAME):
+    def bind(self, host, port):
         """
         :see: http://tools.ietf.org/html/rfc5389#section-7.1
         """
-        msg = stun.Message.encode(stun.METHOD_BINDING, stun.CLASS_REQUEST)
-        msg.add_attribute(stun.Software, software)
-        msg.add_attribute(stun.Fingerprint)
-        self.transactions[msg.transaction_id] = BindingTransaction(self, msg)
-        self.transport.write(msg, (host, port))
+        transaction = BindingTransaction(self)
+        self.transport.write(transaction.request, (host, port))
+        self._transactions[transaction.transaction_id] = transaction
+        transaction.addBoth(self.transaction_completed, transaction)
+        return transaction
 
-    def dispatchMessage(self, msg, addr):
-                # Dispatch message to transaction
-                transaction = self.transactions.get(msg.transaction_id)
-                if transaction:
-                    transaction.messageReceived(msg, addr)
-                else:
-                    print "*** NO SUCH TRANSACTION", msg.transaction_id.encode('hex')
+    def transaction_completed(self, result, transaction):
+        del self._transactions[transaction.transaction_id]
+        return result
+
+    def stun_message_received(self, msg, addr):
+        """
+        :see: http://tools.ietf.org/html/rfc5389#section-7.3.2 - 7.3.4
+        """
+        transaction = self._transactions.get(msg.transaction_id)
+        if transaction:
+            unknown_attributes = msg.unknown_comp_required_attrs()
+            if unknown_attributes:
+                transaction.errback("Response contains unknown comprehension-required attributes")
+            else:
+                transaction.message_received(msg, addr)
+        else:
+            print "*** NO SUCH TRANSACTION", msg.transaction_id.encode('hex')
 
 
 class StunUdpServer(StunUdpProtocol):
@@ -125,39 +106,35 @@ class StunUdpServer(StunUdpProtocol):
     def __init__(self, retransmission_timeout=3., retransmission_continue=7, retransmission_m=16):
         StunUdpProtocol.__init__(self, retransmission_timeout=retransmission_timeout, retransmission_continue=retransmission_continue, retransmission_m=retransmission_m)
 
-    def dispatchMessage(self, message, addr):
-        handler_name = self._HANDLERS.get(message.msg_class)
-        handler = getattr(self, handler_name)
-        handler(message, addr)
-
-    def handle_REQUEST(self, msg, (host, port)):
+    def stun_message_received(self, msg, (host, port)):
         """
         :see: http://tools.ietf.org/html/rfc5389#section-7.3.1
         """
-        unknown_attributes = msg.unknown_comp_required_attrs()
-        if unknown_attributes:
-            response = stun.Message.encode(stun.METHOD_BINDING,
-                                           stun.CLASS_RESPONSE_ERROR,
-                                           transaction_id=msg.transaction_id)
-            response.add_attribute(stun.ErrorCode, *stun.ERR_UNKNOWN_ATTRIBUTE)
-            response.add_attribute(stun.UnknownAttributes, unknown_attributes)
-        else:
-            response = stun.Message.encode(stun.METHOD_BINDING,
-                                           stun.CLASS_RESPONSE_SUCCESS,
-                                           transaction_id=msg.transaction_id)
-            family = stun.Address.aftof(self.transport.addressFamily)
-            response.add_attribute(stun.XorMappedAddress, family, port, host)
+        if msg.msg_class == stun.CLASS_REQUEST:
+            unknown_attributes = msg.unknown_comp_required_attrs()
+            if unknown_attributes:
+                response = stun.Message.encode(stun.METHOD_BINDING,
+                                               stun.CLASS_RESPONSE_ERROR,
+                                               transaction_id=msg.transaction_id)
+                response.add_attribute(stun.ErrorCode, *stun.ERR_UNKNOWN_ATTRIBUTE)
+                response.add_attribute(stun.UnknownAttributes, unknown_attributes)
+            else:
+                response = stun.Message.encode(stun.METHOD_BINDING,
+                                               stun.CLASS_RESPONSE_SUCCESS,
+                                               transaction_id=msg.transaction_id)
+                family = stun.Address.aftof(self.transport.addressFamily)
+                response.add_attribute(stun.XorMappedAddress, family, port, host)
 
-        response.add_attribute(stun.Software, AGENT_NAME)
-        response.add_attribute(stun.Fingerprint)
-        self.transport.write(response, (host, port))
+            response.add_attribute(stun.Software, AGENT_NAME)
+            response.add_attribute(stun.Fingerprint)
+            self.transport.write(response, (host, port))
 
 
 class StunTCPClient(object):
     connection_timeout = 39.5
 
 
-if __name__ == '__main__':
+def main():
     from twisted.internet import reactor
 
 #     host, port = '23.251.129.121', 3478
@@ -169,7 +146,19 @@ if __name__ == '__main__':
 
     client = StunUdpClient()
     client.start()
-    client.request_BINDING('localhost', port)
 
-    reactor.callLater(5, reactor.stop)
+    d = client.bind(host, port)
+    @d.addCallback
+    def binding_succeeded(binding):
+        print "*** Binding succeeded:", binding.format()
+    @d.addErrback
+    def binding_failed(failure):
+        print "*** Binding failed:", failure
+    @d.addBoth
+    def stop(result):
+        reactor.stop()
+
     reactor.run()
+
+if __name__ == '__main__':
+    main()
