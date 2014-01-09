@@ -276,7 +276,7 @@ class Address(Attribute):
 
 @attribute
 class MappedAddress(Address):
-    """STUN MAPPED-ADDRESS attribute
+    """
     :see: http://tools.ietf.org/html/rfc5389#section-15.1
     """
     type, name = ATTR_MAPPED_ADDRESS
@@ -285,7 +285,7 @@ class MappedAddress(Address):
 
 @attribute
 class Username(Attribute):
-    """STUN USERNAME attribute
+    """
     :see: http://tools.ietf.org/html/rfc5389#section-15.3
     """
     type, name = ATTR_USERNAME
@@ -303,7 +303,7 @@ class Username(Attribute):
 
 @attribute
 class MessageIntegrity(Attribute):
-    """STUN MESSAGE-INTEGRITY attribute
+    """
     :see: http://tools.ietf.org/html/rfc5389#section-15.4
     """
     type, name = ATTR_MESSAGE_INTEGRITY
@@ -323,7 +323,7 @@ class MessageIntegrity(Attribute):
 
 @attribute
 class ErrorCode(Attribute):
-    """STUN ERROR-CODE attribute
+    """
     :see: http://tools.ietf.org/html/rfc5389#section-15.6
     """
     type, name = ATTR_ERROR_CODE
@@ -355,7 +355,7 @@ class ErrorCode(Attribute):
 
 @attribute
 class UnknownAttributes(Attribute):
-    """STUN UNKNOWN-ATTRIBUTES attribute
+    """
     :see: http://tools.ietf.org/html/rfc5389#section-15.9
     """
     type, name = ATTR_UNKNOWN_ATTRIBUTES
@@ -379,7 +379,7 @@ class UnknownAttributes(Attribute):
 
 @attribute
 class Realm(Attribute):
-    """STUN REALM attribute
+    """
     :see: http://tools.ietf.org/html/rfc5389#section-15.7
     """
     type, name = ATTR_REALM
@@ -397,7 +397,7 @@ class Realm(Attribute):
 
 @attribute
 class Nonce(Attribute):
-    """STUN NONCE attribute
+    """
     :see: http://tools.ietf.org/html/rfc5389#section-15.8
     """
     type, name = ATTR_NONCE
@@ -406,7 +406,7 @@ class Nonce(Attribute):
 
 @attribute
 class XorMappedAddress(Address):
-    """STUN XOR-MAPPED-ADDRESS attribute
+    """
     :see: http://tools.ietf.org/html/rfc5389#section-15.2
     """
     type, name = ATTR_XOR_MAPPED_ADDRESS
@@ -415,7 +415,7 @@ class XorMappedAddress(Address):
 
 @attribute
 class Software(Attribute):
-    """STUN SOFTWARE attribute
+    """
     :see: http://tools.ietf.org/html/rfc5389#section-15.10
     """
     type, name = ATTR_SOFTWARE
@@ -433,7 +433,7 @@ class Software(Attribute):
 
 @attribute
 class AlternateServer(Address):
-    """STUN ALTERNATE-SERVER attribute
+    """
     :see: http://tools.ietf.org/html/rfc5389#section-15.11
     """
     type, name = ATTR_ALTERNATE_SERVER
@@ -441,7 +441,7 @@ class AlternateServer(Address):
 
 @attribute
 class Fingerprint(Attribute):
-    """STUN FINGERPRINT attribute
+    """
     :see: http://tools.ietf.org/html/rfc5389#section-15.5
     """
     type, name = ATTR_FINGERPRINT
@@ -463,16 +463,31 @@ class Fingerprint(Attribute):
 
 
 if __name__ == '__main__':
-    msg_data = str(bytearray.fromhex(
-        "010100582112a4427a2f2b504c6a7457"
-        "52616c5600200008000191170f01b020"
-        "000100080001b0052e131462802b0008"
-        "00010d960af0d7b4802c000800010d97"
-        "0af0d7b48022001a4369747269782d31"
-        "2e382e372e302027426c61636b20446f"
-        "7727000080280004fd824449"))
-    msg_data = '\x01\x01\x000!\x12\xa4B\xf1\x9b\'\xa4\xac^\xe3v\x16}\xdef\x80"\x00\x16TANDBERG/4120 (X7.2.2)\x00\x00\x00 \x00\x08\x00\x01M\xae\x0f\x01\xb0 \x80(\x00\x04\x15p\x96\xbd'
-#     msg_data = '\x01\x01\x000!\x12\xa4B\x0ef\xc5\xedT\x1c8\xeb\xa7\xaa\xcf:\x80"\x00\x16TANDBERG/4120 (X7.2.2)\x00\x00\x00 \x00\x08\x00\x01\xa5Z\x0f\x01\xb0 \x80(\x00\x04\xf5\xe6\x9b\xfb'
+    msg_data = (
+        '010100582112a4427a2f2b504c6a7457'
+        '52616c5600200008000191170f01b020'
+        '000100080001b0052e131462802b0008'
+        '00010d960af0d7b4802c000800010d97'
+        '0af0d7b48022001a4369747269782d31'
+        '2e382e372e302027426c61636b20446f'
+        '7727000080280004fd824449'
+        ).decode('hex')
+
+#     msg_data = (
+#         '010100302112a442f19b27a4ac5ee376'
+#         '167dde668022001654414e4442455247'
+#         '2f34313230202858372e322e32290000'
+#         '0020000800014dae0f01b02080280004'
+#         '157096bd'
+#         ).decode('hex')
+
+#     msg_data = (
+#         '010100302112a4420e66c5ed541c38eb'
+#         'a7aacf3a8022001654414e4442455247'
+#         '2f34313230202858372e322e32290000'
+#         '002000080001a55a0f01b02080280004'
+#         'f5e69bfb'
+#         ).decode('hex')
 
     msg = Message.decode(msg_data)
     print msg.format()

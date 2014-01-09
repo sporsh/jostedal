@@ -34,7 +34,7 @@ class BindingTransaction(object):
         unknown_attributes = msg.unknown_comp_required_attrs()
         if unknown_attributes:
             #TODO: notify user about failure in success response
-            print "*** ERROR: Unknown comp-required attributes in response", repr(unknown_attributes)
+            print "*** ERROR: Unknown attributes in", msg.format()
             return
         # 1. check that XOR-MAPPED-ADDRESS is present
         # 2. check address family (ignore if unknown, may accept IPv6 when sent IPv4)
@@ -64,6 +64,11 @@ class StunUdpProtocol(DatagramProtocol):
         self.retransmision_timeout = retransmission_timeout
         self.retransmission_continue = retransmission_continue
 
+    def start(self):
+        from twisted.internet import reactor
+        port = reactor.listenUDP(self.PORT, self)
+        return port.port
+
     def datagramReceived(self, datagram, addr):
         """
         :see: http://tools.ietf.org/html/rfc5389#section-7.3
@@ -85,6 +90,8 @@ class StunUdpProtocol(DatagramProtocol):
 
 
 class StunUdpClient(StunUdpProtocol):
+    PORT = 0
+
     def __init__(self, retransmission_timeout=3., retransmission_continue=7, retransmission_m=16):
         StunUdpProtocol.__init__(self, retransmission_timeout=retransmission_timeout,
                                  retransmission_continue=retransmission_continue,
@@ -111,6 +118,7 @@ class StunUdpClient(StunUdpProtocol):
 
 
 class StunUdpServer(StunUdpProtocol):
+    PORT = 3478
     _HANDLERS = {stun.CLASS_REQUEST: 'handle_REQUEST',
                  }
 
@@ -152,18 +160,16 @@ class StunTCPClient(object):
 if __name__ == '__main__':
     from twisted.internet import reactor
 
+#     host, port = '23.251.129.121', 3478
+#     host, port = '46.19.20.100', 3478
+#     host, port = '8.34.221.6', 3478
 
-    stun_server = StunUdpServer()
-    port = reactor.listenUDP(6666, stun_server)
+    server = StunUdpServer()
+    host, port = 'localhost', server.start()
 
-
-    stun_client = StunUdpClient()
-    port = reactor.listenUDP(0, stun_client)
-    stun_client.request_BINDING('localhost', 6666)
-#     stun_client.request_BINDING('23.251.129.121', 3478)
-#     stun_client.request_BINDING('46.19.20.100', 3478)
-#     stun_client.request_BINDING('8.34.221.6', 3478)
-#     stun_client.request_BINDING('localhost', 6666)
+    client = StunUdpClient()
+    client.start()
+    client.request_BINDING('localhost', port)
 
     reactor.callLater(5, reactor.stop)
     reactor.run()

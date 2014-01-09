@@ -2,6 +2,7 @@ import stun
 import struct
 import hashlib
 from twisted.internet.protocol import Protocol
+from stun_agent import StunUdpClient
 
 
 MSG_CHANNEL = 0b01
@@ -170,13 +171,14 @@ class AllocateTransaction(object):
         LIFETIME = 10*60
         pass
 
+
 class AllocateRequest(object):
     def __init__(self, transport_protocol=TRANSPORT_UDP):
         host_transport_address = self._get_transport_address()
         self.transport_protocol = transport_protocol
 
 
-class StunClient(object):
+class TurnUdpClient(StunUdpClient):
     def __init__(self, server):
         self.turn_server_domain_name = None
 
@@ -234,7 +236,7 @@ class StunClient(object):
         pass
 
 
-class StunServer(object):
+class TurnUdpServer(object):
     max_lifetime = 3600
     default_lifetime = 600
 
@@ -306,22 +308,6 @@ class StunServer(object):
         pass
 
 
-class StunProtocol(Protocol):
-    def __init__(self):
-        self._state = None
-        self._message_buffer = ''
-
-    def dataReceived(self, data):
-        self._message_buffer += data
-        message = self._get_message()
-        while message:
-            self._state.messageReceived(message)
-            message = self.getMessage()
-
-    def getMessage(self):
-        message = self.decodeMessage(self._message_buffer)
-        self._message_buffer = self.message_buffer[len(message):]
-        return message
-
-    def sendMessage(self, message):
-        self.transport.write(message.encode())
+if __name__ == '__main__':
+    client = TurnUdpClient()
+    client.start()
