@@ -6,7 +6,14 @@ from twisted.internet import defer
 AGENT_NAME = "PexICE-0.1.0 'Jostedal'"
 
 
+class TransactionError(Exception):
+    pass
+
+
 class BindingTransaction(defer.Deferred):
+    fail = defer.Deferred.errback
+    succeed = defer.Deferred.callback
+
     def __init__(self, agent):
         defer.Deferred.__init__(self)
         request = stun.Message.encode(stun.METHOD_BINDING, stun.CLASS_REQUEST)
@@ -30,11 +37,11 @@ class BindingTransaction(defer.Deferred):
             # error code 300 -> 399; SHOULD fail unless ALTERNATE-SERVER (sec 11)
             # error code 400 -> 499; transaction failed (420, UNKNOWN ATTRIBUTES contain info)
             # error code 500 -> 599; MAY resend, but MUST limit number of retries
-            self.errback(msg)
+            self.fail(TransactionError(msg))
         elif msg.msg_class == stun.CLASS_RESPONSE_SUCCESS:
             # 1. check that XOR-MAPPED-ADDRESS is present
             # 2. check address family (ignore if unknown, may accept IPv6 when sent IPv4)
-            self.callback(msg)
+            self.succeed(msg)
 
 
 class StunUdpProtocol(DatagramProtocol):
@@ -57,6 +64,7 @@ class StunUdpProtocol(DatagramProtocol):
             raise
         else:
             if isinstance(msg, stun.Message):
+                print "*** Received STUN", msg.format()
                 self.stun_message_received(msg, addr)
 
 
@@ -89,9 +97,10 @@ class StunUdpClient(StunUdpProtocol):
         """
         transaction = self._transactions.get(msg.transaction_id)
         if transaction:
-            unknown_attributes = msg.unknown_comp_required_attrs()
+            unknown_attributes = msg.unknown_comp_required_attrs(stun.IGNORED_ATTRS)
             if unknown_attributes:
-                transaction.errback("Response contains unknown comprehension-required attributes")
+                transaction.fail(TransactionError("Response contains unknown "
+                    "comprehension-required attributes", unknown_attributes))
             else:
                 transaction.message_received(msg, addr)
         else:
@@ -130,8 +139,6 @@ class StunUdpServer(StunUdpProtocol):
             self.transport.write(response, (host, port))
 
 
-class StunTCPClient(object):
-    connection_timeout = 39.5
 
 
 def main():

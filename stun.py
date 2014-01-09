@@ -29,16 +29,16 @@ CLASS_RESPONSE_ERROR =      0x11
 # STUN Attribute Registry
 # Comprehension-required range (0x0000-0x7FFF):
 ATTR_MAPPED_ADDRESS =      0x0001, "MAPPED-ADDRESS"
-#                          0x0002 (Reserved; was RESPONSE-ADDRESS
-#                          0x0003 (Reserved; was CHANGE-ADDRESS)
-#                          0x0004 (Reserved; was SOURCE-ADDRESS)
-#                          0x0005 (Reserved; was CHANGED-ADDRESS)
+ATTR_RESPONSE_ADDRESS =    0x0002, "RESPONSE-ADDRESS" # (Reserved)
+ATTR_CHANGE_ADDRESS =      0x0003, "CHANGE-ADDRESS" # (Reserved)
+ATTR_SOURCE_ADDRESS =      0x0004, "SOURCE-ADDRESS" # (Reserved)
+ATTR_CHANGED_ADDRESS =     0x0005, "CHANGED-ADDRESS" # (Reserved)
 ATTR_USERNAME =            0x0006, "USERNAME"
-#                          0x0007 (Reserved; was PASSWORD)
+ATTR_PASSWORD =            0x0007, "PASSWORD" # (Reserved)
 ATTR_MESSAGE_INTEGRITY =   0x0008, "MESSAGE-INTEGRITY"
 ATTR_ERROR_CODE =          0x0009, "ERROR-CODE"
 ATTR_UNKNOWN_ATTRIBUTES =  0x000A, "UNKNOWN-ATTRIBUTES"
-#                          0x000B (Reserved; was REFLECTED-FROM)
+ATTR_REFLECTED_FROM =      0x000B, "REFLECTED-FROM" # (Reserved)
 ATTR_REALM =               0x0014, "REALM"
 ATTR_NONCE =               0x0015, "NONCE"
 ATTR_XOR_MAPPED_ADDRESS =  0x0020, "XOR-MAPPED-ADDRESS"
@@ -47,6 +47,10 @@ ATTR_SOFTWARE =            0x8022, "SOFTWARE"
 ATTR_ALTERNATE_SERVER =    0x8023, "ALTERNATE-SERVER"
 ATTR_FINGERPRINT =         0x8028, "FINGERPRINT"
 
+# Ignored comprehension required attributes for RFC 3489 compability
+IGNORED_ATTRS = [ATTR_RESPONSE_ADDRESS[0], ATTR_CHANGE_ADDRESS[0],
+                 ATTR_SOURCE_ADDRESS[0], ATTR_CHANGED_ADDRESS[0],
+                 ATTR_PASSWORD[0], ATTR_REFLECTED_FROM[0]]
 
 # Error codes (class, number) and recommended reason phrases:
 ERR_TRY_ALTERNATE =     3, 0, "Try Alternate"
@@ -137,11 +141,13 @@ class Message(bytearray):
         cls._ATTR_TYPE_CLS[attr_cls.type] = attr_cls
         return attr_cls
 
-    def unknown_comp_required_attrs(self):
+    def unknown_comp_required_attrs(self, ignored=()):
         """Returns a list of unknown comprehension-required attributes
         """
-        return tuple(attr.type for attr in self._attributes if
-            attr.required and isinstance(attr, Unknown))
+        return tuple(attr.type for attr in self._attributes
+                     if attr.type not in ignored
+                     and attr.required
+                     and isinstance(attr, Unknown))
 
     @property
     def length(self):
@@ -208,7 +214,7 @@ class Attribute(str):
 
     @property
     def required(self):
-        """Establish wether a attribute is required or not
+        """Establish wether a attribute is in the comprehension-required range
         """
         #Comprehension-required attributes are in range 0x0000-0x7fff
         return self.type < 0x8000
