@@ -24,6 +24,7 @@ ATTR_SOFTWARE =            0x8022
 ATTR_ALTERNATE_SERVER =    0x8023
 ATTR_FINGERPRINT =         0x8028
 
+
 FORMAT_STUN =       0b00
 FORMAT_CHANNEL =    0b10
 
@@ -109,11 +110,11 @@ class Message(bytearray):
         cls._ATTR_TYPE_CLS[attr_cls.type] = attr_cls
         return attr_cls
 
-    def unknown_required_attributes(self):
+    def unknown_comp_required_attrs(self):
         """Returns a list of unknown comprehension-required attributes
         """
-        return tuple(attribute for attribute in self._attributes if
-                     attribute.type < 0x8000 and isinstance(attribute, Unknown))
+        return tuple(attr.type for attr in self._attributes if
+            attr.required and isinstance(attr, Unknown))
 
     @property
     def length(self):
@@ -170,6 +171,12 @@ class Attribute(str):
         """
         return (4 - (len(self) % 4)) % 4
 
+    @property
+    def required(self):
+        """Establish wether a attribute is required or not
+        """
+        #Comprehension-required attributes are in range 0x0000-0x7fff
+        return self.type < 0x8000
 
     def __str__(self):
         return "length={}, value={}".format(
@@ -202,12 +209,12 @@ class Address(Attribute):
     aftof = {socket.AF_INET: FAMILY_IPv4,
              socket.AF_INET6: FAMILY_IPv6}.get
 
+    _xored = False
+
     def __init__(self, data, family, port, address):
         self.family = family
         self.port = port
         self.address = address
-
-    _xored = False
 
     @classmethod
     def decode(cls, data, offset, length):
@@ -267,11 +274,6 @@ class Username(Attribute):
         self.username = str.decode(self, 'utf8')
 
     @classmethod
-    def decode(cls, data, offset, length):
-        value = buffer(data, offset, length)
-        return cls(value)
-
-    @classmethod
     def encode(cls, msg, username):
         return cls(username.encode('utf8'))
 
@@ -289,13 +291,12 @@ class MessageIntegrity(Attribute):
 
     @classmethod
     def encode(cls, msg, key):
-#         # long-term key
-#         key = md5('{}:{}:{}'.format(username, realm, password))
-#         # short-term key
-#         key = saslprep(password)
- 
-        # Checksum covers the 'length' value, so it needs to be updated first
+        """
+        :param key: H(A1) for long-term, SASLprep(password) for short-term auth
+        """
+        # HMAC covers the 'length' value of msg, so it needs to be updated first
         msg.length += cls._struct.size + Attribute.struct.size
+
         value = hmac.new(key, msg, hashlib.sha1).digest()
         return cls(value)
 
@@ -312,8 +313,6 @@ class Fingerprint(Attribute):
     @classmethod
     def encode(cls, msg):
         # Checksum covers the 'length' value, so it needs to be updated first
-#         length = len(msg) + cls._struct.size + Attribute.struct.size
-#         struct.pack_into('>H', msg, 2, length)
         msg.length += cls._struct.size + Attribute.struct.size
 
         fingerprint = (binascii.crc32(msg) & 0xffffffff) ^ cls._MAGIC
@@ -325,44 +324,55 @@ class Fingerprint(Attribute):
         return cls(buffer(data, offset, length), fingerprint)
 
 
-# @stunattribute(ATTRIBUTE_ERROR_CODE)
-# class ErrorCode(MessageAttribute):
-#     """STUN ERROR-CODE attribute
-#     :see: http://tools.ietf.org/html/rfc5389#section-15.6
-#     """
-#     _VALUE_FORMAT = '>2x2B'
-#     _VALUE_SIZE = struct.calcsize(_VALUE_FORMAT)
-# 
-#     @classmethod
-#     def decode(cls, data, offset, length):
-#         err_class, err_number = struct.unpack_from(cls._VALUE_FORMAT, data, offset)
-#         err_class &= 0b111
-#         err_reason = str(buffer(data, offset, length)).decode('utf8')
-#         return (err_class, err_number, err_reason)
-# 
-#     @classmethod
-#     def encode(cls, data, value):
-#         err_class, err_number, err_reason = value
-#         attr_data = struct.pack(cls._VALUE_FORMAT, err_class, err_number)
-#         attr_data += err_reason.encode('utf8')
-#         return attr_data
-# 
-#     def __str__(self):
-#         return "code={:1d}{:02d}, reason={!r}".format(*self)
+@attribute
+class ErrorCode(Attribute):
+    """STUN ERROR-CODE attribute
+    :see: http://tools.ietf.org/html/rfc5389#section-15.6
+    """
+    type = ATTR_ERROR_CODE
+    _struct = struct.Struct('>2x2B')
+
+    def __init__(self, data, err_class, err_number, reason):
+        self.err_class = err_class
+        self.err_number = err_number
+        self.code = err_class * 10 + err_number
+        self.reason = reason.decode('utf8')
+
+    @classmethod
+    def decode(cls, data, offset, length):
+        err_class, err_number = cls._struct.unpack_from(data, offset)
+        err_class &= 0b111
+        value = buffer(data, offset, length)
+        reason = buffer(value, cls._struct.size)
+        return cls(value, err_class, err_number, reason)
+
+    @classmethod
+    def encode(cls, data, value):
+        err_class, err_number, err_reason = value
+        attr_data = struct.pack(cls._VALUE_FORMAT, err_class, err_number)
+        attr_data += err_reason.encode('utf8')
+        return attr_data
+
+    def __str__(self):
+        return "code={}, reason={!r}".format(self.code, self.reason)
 
 
-# @stunattribute(ATTRIBUTE_REALM)
-# class Realm(MessageAttribute):
-#     """STUN REALM attribute
-#     :see: http://tools.ietf.org/html/rfc5389#section-15.7
-#     """
-#     @classmethod
-#     def decode(cls, data, offset, length):
-#         return str(buffer(data, offset, length)).decode('utf8')
-# 
-#     @classmethod
-#     def encode(cls, data, value):
-#         return value.encode('utf8')
+@attribute
+class Realm(Attribute):
+    """STUN REALM attribute
+    :see: http://tools.ietf.org/html/rfc5389#section-15.7
+    """
+    type = ATTR_REALM
+
+    def __init__(self, data):
+        self.realm = str.decode(self, 'utf8')
+
+    @classmethod
+    def encode(cls, data, realm):
+        return cls(realm.encode('utf8'))
+
+    def __str__(self):
+        return repr(self.software)
 
 
 # @stunattribute(ATTRIBUTE_NONCE)
@@ -372,20 +382,30 @@ class Fingerprint(Attribute):
 #     """
 
 
-# @stunattribute(ATTRIBUTE_UNKNOWN_ATTRIBUTES)
-# class UnknownAttributes(MessageAttribute):
-#     """STUN UNKNOWN-ATTRIBUTES attribute
-#     :see: http://tools.ietf.org/html/rfc5389#section-15.9
-#     """
-#     @classmethod
-#     def decode(cls, data, offset, length):
-#         fmt = '>{}H'.format(length / 2)
-#         return struct.unpack_from(fmt, data, offset)
-# 
-#     @classmethod
-#     def encode(cls, data, value):
-#         num = len(value)
-#         return struct.pack('>{}H'.format(num), *value)
+@attribute
+class UnknownAttributes(Attribute):
+    """STUN UNKNOWN-ATTRIBUTES attribute
+    :see: http://tools.ietf.org/html/rfc5389#section-15.9
+    """
+    type = ATTR_UNKNOWN_ATTRIBUTES
+
+    def __init__(self, data, types):
+        self.types = types
+
+    @classmethod
+    def decode(cls, data, offset, length):
+        value = buffer(data, offset, length)
+        num = len(value) / 2
+        types = struct.unpack_from('>{}H'.format(num), data, offset)
+        return cls(value, types)
+
+    @classmethod
+    def encode(cls, msg, types):
+        num = len(types)
+        return cls(struct.pack('>{}H'.format(num), *types), types)
+
+    def __str__(self):
+        return str(self.types)
 
 
 @attribute
@@ -397,10 +417,6 @@ class Software(Attribute):
 
     def __init__(self, data):
         self.software = str.decode(self, 'utf8')
-
-    @classmethod
-    def decode(cls, data, offset, length):
-        return cls(buffer(data, offset, length))
 
     @classmethod
     def encode(cls, msg, software):
@@ -432,7 +448,6 @@ if __name__ == '__main__':
 #     msg_data = '\x01\x01\x000!\x12\xa4B\x0ef\xc5\xedT\x1c8\xeb\xa7\xaa\xcf:\x80"\x00\x16TANDBERG/4120 (X7.2.2)\x00\x00\x00 \x00\x08\x00\x01\xa5Z\x0f\x01\xb0 \x80(\x00\x04\xf5\xe6\x9b\xfb'
     msg = Message.decode(msg_data)
     print msg.format()
-    print msg.unknown_required_attributes()
 #     for attribute in msg.attributes:
 #         print repr(attribute)
 
