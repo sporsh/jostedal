@@ -80,7 +80,7 @@ class StunUdpProtocol(DatagramProtocol):
             print "Failed to decode datagram:", e
         else:
             if msg:
-                print "*** RECEIVED", msg.format()
+                print "***", self.__class__.__name__, "RECEIVED", msg.format()
                 self.dispatchMessage(msg, addr)
 
 
@@ -99,7 +99,6 @@ class StunUdpClient(StunUdpProtocol):
         msg.add_attribute(stun.Software, software)
         msg.add_attribute(stun.Fingerprint)
         self.transactions[msg.transaction_id] = StunBindingTransaction(self, msg)
-        print "*** SENDING", msg.format()
         self.transport.write(msg, (host, port))
 
     def dispatchMessage(self, msg, addr):
@@ -123,32 +122,27 @@ class StunUdpServer(StunUdpProtocol):
         handler = getattr(self, handler_name)
         handler(message, addr)
 
-    def handle_REQUEST(self, message, (host, port)):
+    def handle_REQUEST(self, msg, (host, port)):
         """
         :see: http://tools.ietf.org/html/rfc5389#section-7.3.1
         """
-        attributes = [(stun.ATTR_SOFTWARE, 0, AGENT_NAME)]
-        # 1. check unknown comprehension-required attributes
-        unknown_attributes = message.get_unknown_attributes()
+        unknown_attributes = msg.unknown_comp_required_attrs()
         if unknown_attributes:
-            #error
-            #    - reply with 420
-            response_class = stun.CLASS_RESPONSE_ERROR
-            attributes.append((ATTRIBUTE_ERROR_CODE, 0, (4, 20, "Unknown comprehension-required attributes")))
-            unknown_attr_types = [attr.type for attr in unknown_attributes]
-            attributes.append((stun.ATTR_UNKNOWN_ATTRIBUTES, 0, unknown_attr_types))
+            response = stun.Message.encode(stun.METHOD_BINDING,
+                                           stun.CLASS_RESPONSE_ERROR,
+                                           transaction_id=msg.transaction_id)
+            response.add_attribute(stun.ErrorCode, *stun.ERR_UNKNOWN_ATTRIBUTE)
+            response.add_attribute(stun.UnknownAttributes, unknown_attributes)
         else:
-            #success
+            response = stun.Message.encode(stun.METHOD_BINDING,
+                                           stun.CLASS_RESPONSE_SUCCESS,
+                                           transaction_id=msg.transaction_id)
             family = stun.Address.aftof(self.transport.addressFamily)
-            attributes.append((stun.ATTR_XOR_MAPPED_ADDRESS, 0, (family, port, host)))
-            response_class = stun.CLASS_RESPONSE_SUCCESS
+            response.add_attribute(stun.XorMappedAddress, family, port, host)
 
-        attributes.append((stun.ATTR_FINGERPRINT, 0, 0))
-        response = stun.Message(message.msg_method,
-                               response_class,
-                               transaction_id=message.transaction_id,
-                               attributes=attributes)
-        self.transport.write(response.encode(), (host, port))
+        response.add_attribute(stun.Software, AGENT_NAME)
+        response.add_attribute(stun.Fingerprint)
+        self.transport.write(response, (host, port))
 
 
 class StunTCPClient(object):
@@ -159,14 +153,14 @@ if __name__ == '__main__':
     from twisted.internet import reactor
 
 
-#     stun_server = StunUdpServer()
-#     port = reactor.listenUDP(6666, stun_server)
+    stun_server = StunUdpServer()
+    port = reactor.listenUDP(6666, stun_server)
 
 
     stun_client = StunUdpClient()
     port = reactor.listenUDP(0, stun_client)
-#     stun_client.request_BINDING('localhost', 6666)
-    stun_client.request_BINDING('23.251.129.121', 3478)
+    stun_client.request_BINDING('localhost', 6666)
+#     stun_client.request_BINDING('23.251.129.121', 3478)
 #     stun_client.request_BINDING('46.19.20.100', 3478)
 #     stun_client.request_BINDING('8.34.221.6', 3478)
 #     stun_client.request_BINDING('localhost', 6666)
