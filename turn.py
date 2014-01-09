@@ -1,7 +1,33 @@
-from twisted.internet.protocol import Protocol
 import stun
-import hashlib
 import struct
+import hashlib
+from twisted.internet.protocol import Protocol
+
+
+MSG_CHANNEL = 0b01
+
+
+METHOD_ALLOCATE =           0x003 # only request/response semantics defined
+METHOD_REFRESH =            0x004 # only request/response semantics defined
+METHOD_SEND =               0x006 # only indication semantics defined
+METHOD_DATA =               0x007 # only indication semantics defined
+METHOD_CREATE_PERMISSION =  0x008 # only request/response semantics defined
+METHOD_CHANNEL_BIND =       0x009 # only request/response semantics defined
+
+
+ATTR_CHANNEL_NUMBER =      0x000C, "CHANNEL-NUMBER"
+ATTR_LIFETIME =            0x000D, "LIFETIME"
+ATTR_XOR_PEER_ADDRESS =    0x0012, "XOR-PEER-ADDRESS"
+ATTR_DATA =                0x0013, "DATA"
+ATTR_XOR_RELAYED_ADDRESS = 0x0016, "XOR-RELAYED-ADDRESS"
+ATTR_EVEN_PORT =           0x0018, "EVEN-PORT"
+ATTR_REQUESTED_TRANSPORT = 0x0019, "REQUESTED-TRANSPORT"
+ATTR_DONT_FRAGMENT =       0x001A, "DONT-FRAGMENT"
+ATTR_RESERVATION_TOKEN =   0x0022, "RESERVATION-TOKEN"
+
+
+TRANSPORT_UDP = 0x11
+
 
 def saslprep(string):
     #TODO
@@ -9,17 +35,6 @@ def saslprep(string):
 
 def ha1(username, realm, password):
     return hashlib.md5(':'.join((username, realm, saslprep(password)))).digest()
-
-
-ATTR_CHANNEL_NUMBER =      0x000C
-ATTR_LIFETIME =            0x000D
-ATTR_XOR_PEER_ADDRESS =    0x0012
-ATTR_DATA =                0x0013
-ATTR_XOR_RELAYED_ADDRESS = 0x0016
-ATTR_EVEN_PORT =           0x0018
-ATTR_REQUESTED_TRANSPORT = 0x0019
-ATTR_DONT_FRAGMENT =       0x001A
-ATTR_RESERVATION_TOKEN =   0x0022
 
 
 @stun.attribute
@@ -30,7 +45,7 @@ class ChannelNumber(stun.Attribute):
     @classmethod
     def decode(cls, data, offset, length):
         return struct.unpack_from('>H2x', data, offset)
-    type = ATTR_CHANNEL_NUMBER
+    type, name = ATTR_CHANNEL_NUMBER
 
 
 @stun.attribute
@@ -38,7 +53,7 @@ class Lifetime(stun.Attribute):
     """TURN STUN LIFETIME attribute
     :see: http://tools.ietf.org/html/rfc5766#section-14.2
     """
-    type = ATTR_LIFETIME
+    type, name = ATTR_LIFETIME
 
 
 @stun.attribute
@@ -46,7 +61,8 @@ class XorPeerAddress(stun.Address):
     """TURN STUN XOR-PEER-ADDRESS attribute
     :see: http://tools.ietf.org/html/rfc5766#section-14.3
     """
-    type = ATTR_XOR_PEER_ADDRESS
+    type, name = ATTR_XOR_PEER_ADDRESS
+    _xored = True
 
 
 @stun.attribute
@@ -54,7 +70,7 @@ class Data(stun.Attribute):
     """TURN STUN DATA attribute
     :see: http://tools.ietf.org/html/rfc5766#section-14.4
     """
-    type = ATTR_DATA
+    type, name = ATTR_DATA
 
 
 @stun.attribute
@@ -62,7 +78,8 @@ class XorRelayedAddress(stun.Address):
     """TURN STUN XOR-RELAYED-ADDRESS attribute
     :see: http://tools.ietf.org/html/rfc5766#section-14.5
     """
-    type = ATTR_XOR_RELAYED_ADDRESS
+    type, name = ATTR_XOR_RELAYED_ADDRESS
+    _xored = True
 
 
 @stun.attribute
@@ -70,7 +87,7 @@ class EvenPort(stun.Attribute):
     """TURN STUN EVEN-PORT attribute
     :see: http://tools.ietf.org/html/rfc5766#section-14.6
     """
-    type = ATTR_EVEN_PORT
+    type, name = ATTR_EVEN_PORT
     RESERVE = 0b10000000
 
     @classmethod
@@ -83,13 +100,28 @@ class RequestedTransport(stun.Attribute):
     """TURN STUN REQUESTED-TRANSPORT attribute
     :see: http://tools.ietf.org/html/rfc5766#section-14.7
     """
-    type = ATTR_REQUESTED_TRANSPORT
-    UDP = 0x11
+    type, name = ATTR_REQUESTED_TRANSPORT
 
     @classmethod
     def decode(cls, data, offset, length):
         protocol, = struct.unpack_from('>B3x', data, offset)
         return protocol
+
+
+@stun.attribute
+class DontFragment(stun.Attribute):
+    """
+    :see: http://tools.ietf.org/html/rfc5766#section-14.8
+    """
+    type, name = ATTR_DONT_FRAGMENT
+
+
+@stun.attribute
+class ReservationToken(stun.Attribute):
+    """
+    :see: http://tools.ietf.org/html/rfc5766#section-14.9
+    """
+    type, name = ATTR_RESERVATION_TOKEN
 
 
 class StunState(object):
@@ -139,7 +171,7 @@ class AllocateTransaction(object):
         pass
 
 class AllocateRequest(object):
-    def __init__(self, transport_protocol=RequestedTransport.UDP):
+    def __init__(self, transport_protocol=TRANSPORT_UDP):
         host_transport_address = self._get_transport_address()
         self.transport_protocol = transport_protocol
 
@@ -148,7 +180,7 @@ class StunClient(object):
     def __init__(self, server):
         self.turn_server_domain_name = None
 
-    def send_ALLOCATE_REQUEST(self, transport_protocol=RequestedTransport.UDP,
+    def send_ALLOCATE_REQUEST(self, transport_protocol=TRANSPORT_UDP,
                                 time_to_expiry=None,
                                 dont_fragment=False,
                                 even_port=None,
@@ -157,8 +189,7 @@ class StunClient(object):
         :param even_port: None | 0 | 1 (1==reserve next highest port number)
         :see: http://tools.ietf.org/html/rfc5766#section-6.1
         """
-        msg = stun.StunMessage.encode(METHOD_ALLOCATE,
-                                      stun.CLASS_REQUEST)
+        msg = stun.Message.encode(METHOD_ALLOCATE, stun.CLASS_REQUEST)
         msg.add_attr(ATTR_REQUESTED_TRANSPORT, transport_protocol)
         host_transport_address = self.get_host_transport_address()
         server_transport_address = self.get_server_transport_address()
@@ -216,15 +247,15 @@ class StunServer(object):
         # 1. require request to be authenticated
         # 2. Check if the 5-tuple is currently in use
         # 3. Check REQUESTED-TRANSPORT attribute
-        requested_transport = message.get_attribute(ATTRIBUTE_REQUESTED_TRANSPORT)
+        requested_transport = message.get_attribute(ATTR_REQUESTED_TRANSPORT)
         if not requested_transport:
             pass # TODO: reject with 400
-        if requested_transport.value != RequestedTransport.UDP:
+        if requested_transport.value != TRANSPORT_UDP:
             pass # TODO: reject with 442
         # 4. handle DONT-FRAGMENT attribute
         # 5. Check RESERVATION-TOKEN attribute
-        reservation_token = message.get_attribute(ATTRIBUTE_RESERVATION_TOKEN)
-        even_port = message.get_attribute(ATTRIBUTE_EVEN_PORT)
+        reservation_token = message.get_attribute(ATTR_RESERVATION_TOKEN)
+        even_port = message.get_attribute(ATTR_EVEN_PORT)
         if reservation_token:
             if even_port:
                 pass # TODO: reject with 400
@@ -250,7 +281,7 @@ class StunServer(object):
                         #      N is even, set relayed transport addr with N and
                         #      reserve N+1 for atleast 30s (until N released)
                         #      and assign a token to that reservation
-                response.attributes.append(ReservationToken(token))
+                response.add_attr(ReservationToken, token)
             elif even_port:
                 pass #TODO: allocate relayed transport address with even port number
         if not relayed_address:

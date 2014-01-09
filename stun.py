@@ -10,18 +10,21 @@ import hashlib
 import binascii
 
 
-FORMAT_STUN =       0b00
+MSG_STUN =       0b00
 MAGIC_COOKIE = 0x2112A442
+
 
 # STUN Methods Registry
 #                0x000 (Reserved)
 METHOD_BINDING = 0x001
 #                0x002 (Reserved; was SharedSecret)
 
+
 CLASS_REQUEST =             0x00
 CLASS_INDICATION =          0x01
 CLASS_RESPONSE_SUCCESS =    0x10
 CLASS_RESPONSE_ERROR =      0x11
+
 
 # STUN Attribute Registry
 # Comprehension-required range (0x0000-0x7FFF):
@@ -43,6 +46,7 @@ ATTR_XOR_MAPPED_ADDRESS =  0x0020, "XOR-MAPPED-ADDRESS"
 ATTR_SOFTWARE =            0x8022, "SOFTWARE"
 ATTR_ALTERNATE_SERVER =    0x8023, "ALTERNATE-SERVER"
 ATTR_FINGERPRINT =         0x8028, "FINGERPRINT"
+
 
 # Error codes (class, number) and recommended reason phrases:
 ERR_TRY_ALTERNATE =     3,00, "Try Alternate"
@@ -90,7 +94,7 @@ class Message(bytearray):
 
     @classmethod
     def decode(cls, data):
-        assert ord(data[0]) >> 6 == FORMAT_STUN, \
+        assert ord(data[0]) >> 6 == MSG_STUN, \
             "Stun message MUST start with 0b00"
         msg_type, msg_length, magic_cookie, transaction_id = cls._struct.unpack_from(data)
         msg_type &= 0x3fff               # 00111111 11111111
@@ -280,15 +284,6 @@ class MappedAddress(Address):
 
 
 @attribute
-class XorMappedAddress(Address):
-    """STUN XOR-MAPPED-ADDRESS attribute
-    :see: http://tools.ietf.org/html/rfc5389#section-15.2
-    """
-    type, name = ATTR_XOR_MAPPED_ADDRESS
-    _xored = True
-
-
-@attribute
 class Username(Attribute):
     """STUN USERNAME attribute
     :see: http://tools.ietf.org/html/rfc5389#section-15.3
@@ -327,29 +322,6 @@ class MessageIntegrity(Attribute):
 
 
 @attribute
-class Fingerprint(Attribute):
-    """STUN FINGERPRINT attribute
-    :see: http://tools.ietf.org/html/rfc5389#section-15.5
-    """
-    type, name = ATTR_FINGERPRINT
-    _struct = struct.Struct('>L')
-    _MAGIC = 0x5354554e
-
-    @classmethod
-    def encode(cls, msg):
-        # Checksum covers the 'length' value, so it needs to be updated first
-        msg.length += cls._struct.size + Attribute.struct.size
-
-        fingerprint = (binascii.crc32(msg) & 0xffffffff) ^ cls._MAGIC
-        return cls(cls._struct.pack(fingerprint))
-
-    @classmethod
-    def decode(cls, data, offset, length):
-        fingerprint, = cls._struct.unpack_from(data, offset)
-        return cls(buffer(data, offset, length), fingerprint)
-
-
-@attribute
 class ErrorCode(Attribute):
     """STUN ERROR-CODE attribute
     :see: http://tools.ietf.org/html/rfc5389#section-15.6
@@ -382,6 +354,30 @@ class ErrorCode(Attribute):
 
 
 @attribute
+class UnknownAttributes(Attribute):
+    """STUN UNKNOWN-ATTRIBUTES attribute
+    :see: http://tools.ietf.org/html/rfc5389#section-15.9
+    """
+    type, name = ATTR_UNKNOWN_ATTRIBUTES
+
+    def __init__(self, data, types):
+        self.types = types
+
+    @classmethod
+    def decode(cls, data, offset, length):
+        types = struct.unpack_from('>{}H'.format(length // 2), data, offset)
+        return cls(buffer(data, offset, length), types)
+
+    @classmethod
+    def encode(cls, msg, types):
+        num = len(types)
+        return cls(struct.pack('>{}H'.format(num), *types), types)
+
+    def __str__(self):
+        return str([("{:#06x}".format(t) for t in self.types)])
+
+
+@attribute
 class Realm(Attribute):
     """STUN REALM attribute
     :see: http://tools.ietf.org/html/rfc5389#section-15.7
@@ -407,28 +403,14 @@ class Nonce(Attribute):
     type, name = ATTR_NONCE
     _max_length = 763 # less than 128 characters can be up to 763 bytes
 
+
 @attribute
-class UnknownAttributes(Attribute):
-    """STUN UNKNOWN-ATTRIBUTES attribute
-    :see: http://tools.ietf.org/html/rfc5389#section-15.9
+class XorMappedAddress(Address):
+    """STUN XOR-MAPPED-ADDRESS attribute
+    :see: http://tools.ietf.org/html/rfc5389#section-15.2
     """
-    type, name = ATTR_UNKNOWN_ATTRIBUTES
-
-    def __init__(self, data, types):
-        self.types = types
-
-    @classmethod
-    def decode(cls, data, offset, length):
-        types = struct.unpack_from('>{}H'.format(length // 2), data, offset)
-        return cls(buffer(data, offset, length), types)
-
-    @classmethod
-    def encode(cls, msg, types):
-        num = len(types)
-        return cls(struct.pack('>{}H'.format(num), *types), types)
-
-    def __str__(self):
-        return str([("{:#06x}".format(t) for t in self.types)])
+    type, name = ATTR_XOR_MAPPED_ADDRESS
+    _xored = True
 
 
 @attribute
@@ -449,16 +431,38 @@ class Software(Attribute):
         return repr(self.software)
 
 
-# @stunattribute(ATTRIBUTE_ALTERNATE_SERVER)
-# class AlternateServer(MappedAddress):
-#     """STUN ALTERNATE-SERVER attribute
-#     :see: http://tools.ietf.org/html/rfc5389#section-15.11
-#     """
+@attribute
+class AlternateServer(Address):
+    """STUN ALTERNATE-SERVER attribute
+    :see: http://tools.ietf.org/html/rfc5389#section-15.11
+    """
+    type, name = ATTR_ALTERNATE_SERVER
+
+
+@attribute
+class Fingerprint(Attribute):
+    """STUN FINGERPRINT attribute
+    :see: http://tools.ietf.org/html/rfc5389#section-15.5
+    """
+    type, name = ATTR_FINGERPRINT
+    _struct = struct.Struct('>L')
+    _MAGIC = 0x5354554e
+
+    @classmethod
+    def encode(cls, msg):
+        # Checksum covers the 'length' value, so it needs to be updated first
+        msg.length += cls._struct.size + Attribute.struct.size
+
+        fingerprint = (binascii.crc32(msg) & 0xffffffff) ^ cls._MAGIC
+        return cls(cls._struct.pack(fingerprint))
+
+    @classmethod
+    def decode(cls, data, offset, length):
+        fingerprint, = cls._struct.unpack_from(data, offset)
+        return cls(buffer(data, offset, length), fingerprint)
 
 
 if __name__ == '__main__':
-    from rfc5780 import OtherAddress
-    attribute(OtherAddress)
     msg_data = str(bytearray.fromhex(
         "010100582112a4427a2f2b504c6a7457"
         "52616c5600200008000191170f01b020"
@@ -467,32 +471,19 @@ if __name__ == '__main__':
         "0af0d7b48022001a4369747269782d31"
         "2e382e372e302027426c61636b20446f"
         "7727000080280004fd824449"))
-#     msg_data = '\x01\x01\x000!\x12\xa4B\xf1\x9b\'\xa4\xac^\xe3v\x16}\xdef\x80"\x00\x16TANDBERG/4120 (X7.2.2)\x00\x00\x00 \x00\x08\x00\x01M\xae\x0f\x01\xb0 \x80(\x00\x04\x15p\x96\xbd'
+    msg_data = '\x01\x01\x000!\x12\xa4B\xf1\x9b\'\xa4\xac^\xe3v\x16}\xdef\x80"\x00\x16TANDBERG/4120 (X7.2.2)\x00\x00\x00 \x00\x08\x00\x01M\xae\x0f\x01\xb0 \x80(\x00\x04\x15p\x96\xbd'
 #     msg_data = '\x01\x01\x000!\x12\xa4B\x0ef\xc5\xedT\x1c8\xeb\xa7\xaa\xcf:\x80"\x00\x16TANDBERG/4120 (X7.2.2)\x00\x00\x00 \x00\x08\x00\x01\xa5Z\x0f\x01\xb0 \x80(\x00\x04\xf5\xe6\x9b\xfb'
+
     msg = Message.decode(msg_data)
     print msg.format()
-#     for attribute in msg.attributes:
-#         print repr(attribute)
+    print msg_data.encode('hex')
 
-    print str(msg_data).encode('hex')
-#     print str(msg.encode()).encode('hex')
-
-#     msg2 = Message.decode(str(msg.encode()))
-#     print repr(msg2[:-1])
-#     assert msg == msg2
-# 
     msg3 = Message.encode(METHOD_BINDING, CLASS_REQUEST)
-    print str(msg3).encode('hex')
     msg3.add_attribute(MappedAddress, Address.FAMILY_IPv4, 6666, '192.168.2.1')
     msg3.add_attribute(XorMappedAddress, Address.FAMILY_IPv4, 6666, '192.168.2.1')
     msg3.add_attribute(Username, "testuser")
     msg3.add_attribute(MessageIntegrity, 'somerandomkey')
     msg3.add_attribute(Software, "Test STUN Agent")
     msg3.add_attribute(Fingerprint)
-
-    print repr(msg3)
-    print len(msg3)
-    print repr(Message.decode(str(msg3)))
-#     print Message.decode(str(msg3))
-
+    print str(msg3).encode('hex')
     print msg3.format()

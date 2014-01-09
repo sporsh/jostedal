@@ -1,11 +1,11 @@
-from twisted.internet.protocol import DatagramProtocol
 import stun
+from twisted.internet.protocol import DatagramProtocol
 
 
 AGENT_NAME = "PexICE-0.1.0 'Jostedal'"
 
 
-class StunBindingTransaction(object):
+class BindingTransaction(object):
     _HANDLERS = {stun.CLASS_INDICATION: 'handle_INDICATION',
                  stun.CLASS_RESPONSE_SUCCESS: 'handle_RESPONSE_SUCCESS',
                  stun.CLASS_RESPONSE_ERROR: 'handle_RESPONSE_ERROR'}
@@ -55,7 +55,7 @@ class StunBindingTransaction(object):
         print "*** TRANSACTION FAILED"
 
 
-class StunAuthTransaction(object):
+class AuthTransaction(object):
     pass
 
 
@@ -98,7 +98,7 @@ class StunUdpClient(StunUdpProtocol):
         msg = stun.Message.encode(stun.METHOD_BINDING, stun.CLASS_REQUEST)
         msg.add_attribute(stun.Software, software)
         msg.add_attribute(stun.Fingerprint)
-        self.transactions[msg.transaction_id] = StunBindingTransaction(self, msg)
+        self.transactions[msg.transaction_id] = BindingTransaction(self, msg)
         self.transport.write(msg, (host, port))
 
     def dispatchMessage(self, msg, addr):
