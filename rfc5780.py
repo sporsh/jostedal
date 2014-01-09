@@ -35,6 +35,7 @@ class ResponseOrigin(stun.Address):
     :see: http://tools.ietf.org/html/rfc5780#section-7.3
     """
     type = ATTR_RESPONSE_ORIGIN
+    _xored = True
 
 
 @stun.attribute
@@ -43,7 +44,7 @@ class OtherAddress(stun.Address):
     :see: http://tools.ietf.org/html/rfc5780#section-7.4
     """
     type = ATTR_OTHER_ADDRESS
-
+    _xored = True
 
 @stun.attribute
 class ResponsePort(stun.Attribute):
@@ -55,7 +56,7 @@ class ResponsePort(stun.Attribute):
     @classmethod
     def decode(cls, data, offset, length):
         port, = struct.unpack_from('>H2x', data, offset)
-        return port
+        return cls(buffer(data, offset, length), port)
 
 
 @stun.attribute

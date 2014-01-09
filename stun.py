@@ -103,6 +103,7 @@ class Message(bytearray):
     def add_attr_cls(cls, attr_cls):
         """Decorator to add a Stun Attribute as an recognized attribute type
         """
+        print "*** Loaded attribute {0.type:#06x}: {0.__name__}".format(attr_cls)
         assert not cls._ATTR_TYPE_CLS.get(attr_cls.type, False), \
             "Duplicate definition for {:#06x}".format(attr_cls.type)
         cls._ATTR_TYPE_CLS[attr_cls.type] = attr_cls
@@ -189,6 +190,7 @@ class Unknown(Attribute):
 
 class Address(Attribute):
     """Base class for all the addess STUN attributes
+    :cvar _xored: Wether or not the port and address field are xored
     """
     struct = struct.Struct('>xBH')
 
@@ -205,6 +207,32 @@ class Address(Attribute):
         self.port = port
         self.address = address
 
+    _xored = False
+
+    @classmethod
+    def decode(cls, data, offset, length):
+        family, port = cls.struct.unpack_from(data, offset)
+        packed_ip = buffer(data, offset + cls.struct.size, length - cls.struct.size)
+        if cls._xored:
+            # xport and xaddress are xored with the concatination of
+            # the magic cookie and the transaction id (data[4:20])
+            magic = bytearray(*struct.unpack_from('>16s', data, 4))
+            port = port ^ magic[0] << 8 ^ magic[1]
+            packed_ip = buffer(bytearray(ord(a) ^ b for a, b in zip(packed_ip, magic)))
+        address = socket.inet_ntop(Address.ftoaf(family), packed_ip)
+        value = buffer(data, offset, length)
+        return cls(value, family, port, address)
+
+    @classmethod
+    def encode(cls, msg, family, port, address):
+        packed_ip = socket.inet_pton(Address.ftoaf(family), address)
+        if cls._xored:
+            magic = bytearray(*struct.unpack_from('>16s', msg, 4))
+            port = port ^ magic[0] << 8 ^ magic[1]
+            packed_ip = bytearray(ord(a) ^ b for a, b in zip(packed_ip, magic))
+        data = cls.struct.pack(family, port) + packed_ip
+        return cls(data, family, port, address)
+
     def __str__(self):
         return "family={:#04x}, port={}, address={!r}".format(
             self.family, self.port, self.address)
@@ -216,20 +244,7 @@ class MappedAddress(Address):
     :see: http://tools.ietf.org/html/rfc5389#section-15.1
     """
     type = ATTR_MAPPED_ADDRESS
-
-    @classmethod
-    def decode(cls, data, offset, length):
-        family, port = cls.struct.unpack_from(data, offset)
-        packed_ip = buffer(data, offset + cls.struct.size, length - cls.struct.size)
-        address = socket.inet_ntop(Address.ftoaf(family), packed_ip)
-        value = buffer(data, offset, length)
-        return cls(value, family, port, address)
-
-    @classmethod
-    def encode(cls, msg, family, port, address):
-        packed_ip = socket.inet_pton(Address.ftoaf(family), address)
-        value = cls.struct.pack(family, port) + packed_ip
-        return cls(value, family, port, address)
+    _xored = False
 
 
 @attribute
@@ -238,31 +253,7 @@ class XorMappedAddress(Address):
     :see: http://tools.ietf.org/html/rfc5389#section-15.2
     """
     type = ATTR_XOR_MAPPED_ADDRESS
-
-    @classmethod
-    def decode(cls, data, offset, length):
-        family, xport = cls.struct.unpack_from(data, offset)
-        xaddress = buffer(data, offset + cls.struct.size, length - cls.struct.size)
-        # xport and xaddress are xored with the concatination of
-        # the magic cookie and the transaction id (data[4:20])
-        magic = bytearray(*struct.unpack_from('>16s', data, 4))
-        port = xport ^ magic[0] << 8 ^ magic[1]
-        packed_ip = buffer(bytearray(ord(a) ^ b for a, b in zip(xaddress, magic)))
-        address = socket.inet_ntop(Address.ftoaf(family), packed_ip)
-        value = buffer(data, offset, length)
-        return cls(value, family, port, address)
-
-    @classmethod
-    def encode(cls, msg, family, port, address):
-        """
-        :param msg: The STUN message this attribute is to be encoded for
-        """
-        magic = bytearray(*struct.unpack_from('>16s', msg, 4))
-        xport = port ^ magic[0] << 8 ^ magic[1]
-        packed_ip = bytearray(socket.inet_pton(Address.ftoaf(family), address))
-        xaddress = bytearray(a ^ b for a, b in zip(packed_ip, magic))
-        data = cls.struct.pack(family, xport) + xaddress
-        return cls(data, family, port, address)
+    _xored = True
 
 
 @attribute
@@ -427,6 +418,8 @@ class Software(Attribute):
 
 
 if __name__ == '__main__':
+    from rfc5780 import OtherAddress
+    attribute(OtherAddress)
     msg_data = str(bytearray.fromhex(
         "010100582112a4427a2f2b504c6a7457"
         "52616c5600200008000191170f01b020"
@@ -438,7 +431,7 @@ if __name__ == '__main__':
 #     msg_data = '\x01\x01\x000!\x12\xa4B\xf1\x9b\'\xa4\xac^\xe3v\x16}\xdef\x80"\x00\x16TANDBERG/4120 (X7.2.2)\x00\x00\x00 \x00\x08\x00\x01M\xae\x0f\x01\xb0 \x80(\x00\x04\x15p\x96\xbd'
 #     msg_data = '\x01\x01\x000!\x12\xa4B\x0ef\xc5\xedT\x1c8\xeb\xa7\xaa\xcf:\x80"\x00\x16TANDBERG/4120 (X7.2.2)\x00\x00\x00 \x00\x08\x00\x01\xa5Z\x0f\x01\xb0 \x80(\x00\x04\xf5\xe6\x9b\xfb'
     msg = Message.decode(msg_data)
-    print repr(msg)
+    print msg.format()
     print msg.unknown_required_attributes()
 #     for attribute in msg.attributes:
 #         print repr(attribute)
