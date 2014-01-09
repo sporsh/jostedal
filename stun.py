@@ -10,38 +10,54 @@ import hashlib
 import binascii
 
 
-# Comprehension-required range (0x0000-0x7FFF):
-ATTR_MAPPED_ADDRESS =      0x0001
-ATTR_USERNAME =            0x0006
-ATTR_MESSAGE_INTEGRITY =   0x0008
-ATTR_ERROR_CODE =          0x0009
-ATTR_UNKNOWN_ATTRIBUTES =  0x000A
-ATTR_REALM =               0x0014
-ATTR_NONCE =               0x0015
-ATTR_XOR_MAPPED_ADDRESS =  0x0020
-# Comprehension-optional range (0x8000-0xFFFF)
-ATTR_SOFTWARE =            0x8022
-ATTR_ALTERNATE_SERVER =    0x8023
-ATTR_FINGERPRINT =         0x8028
-
-
 FORMAT_STUN =       0b00
-FORMAT_CHANNEL =    0b10
-
 MAGIC_COOKIE = 0x2112A442
 
+# STUN Methods Registry
+#                0x000 (Reserved)
 METHOD_BINDING = 0x001
+#                0x002 (Reserved; was SharedSecret)
 
 CLASS_REQUEST =             0x00
 CLASS_INDICATION =          0x01
 CLASS_RESPONSE_SUCCESS =    0x10
 CLASS_RESPONSE_ERROR =      0x11
 
+# STUN Attribute Registry
+# Comprehension-required range (0x0000-0x7FFF):
+ATTR_MAPPED_ADDRESS =      0x0001, "MAPPED-ADDRESS"
+#                          0x0002 (Reserved; was RESPONSE-ADDRESS
+#                          0x0003 (Reserved; was CHANGE-ADDRESS)
+#                          0x0004 (Reserved; was SOURCE-ADDRESS)
+#                          0x0005 (Reserved; was CHANGED-ADDRESS)
+ATTR_USERNAME =            0x0006, "USERNAME"
+#                          0x0007 (Reserved; was PASSWORD)
+ATTR_MESSAGE_INTEGRITY =   0x0008, "MESSAGE-INTEGRITY"
+ATTR_ERROR_CODE =          0x0009, "ERROR-CODE"
+ATTR_UNKNOWN_ATTRIBUTES =  0x000A, "UNKNOWN-ATTRIBUTES"
+#                          0x000B (Reserved; was REFLECTED-FROM)
+ATTR_REALM =               0x0014, "REALM"
+ATTR_NONCE =               0x0015, "NONCE"
+ATTR_XOR_MAPPED_ADDRESS =  0x0020, "XOR-MAPPED-ADDRESS"
+# Comprehension-optional range (0x8000-0xFFFF):
+ATTR_SOFTWARE =            0x8022, "SOFTWARE"
+ATTR_ALTERNATE_SERVER =    0x8023, "ALTERNATE-SERVER"
+ATTR_FINGERPRINT =         0x8028, "FINGERPRINT"
+
+# Error codes (class, number) and recommended reason phrases:
+ERR_TRY_ALTERNATE =     3,00, "Try Alternate"
+ERR_BAD_REQUEST =       4,00, "Bad Request"
+ERR_UNAUTHORIZED =      4,01, "Unauthorized"
+ERR_UNKNOWN_ATTRIBUTE = 4,20, "Unknown Attribute"
+ERR_STALE_NONCE =       4,38, "Stale Nonce"
+ERR_SERVER_ERROR =      5,00, "Server Error"
+
 
 class Message(bytearray):
     """STUN message structure
     :see: http://tools.ietf.org/html/rfc5389#section-6
     """
+
     _struct = struct.Struct('>2HL12s')
     _ATTR_TYPE_CLS = {}
 
@@ -62,8 +78,8 @@ class Message(bytearray):
         message.extend(data)
         return message
 
-    def add_attribute(self, attr_type, *args, **kwargs):
-        attr = self.get_attr_cls(attr_type).encode(self, *args, **kwargs)
+    def add_attribute(self, attr_cls, *args, **kwargs):
+        attr = attr_cls.encode(self, *args, **kwargs)
         self.extend(Attribute.struct.pack(attr.type, len(attr)))
         self.extend(attr)
         self.extend(os.urandom(attr.padding))
@@ -104,7 +120,7 @@ class Message(bytearray):
     def add_attr_cls(cls, attr_cls):
         """Decorator to add a Stun Attribute as an recognized attribute type
         """
-        print "*** Loaded attribute {0.type:#06x}: {0.__name__}".format(attr_cls)
+        print "*** Registered attribute {0.type:#06x}={0.name}".format(attr_cls)
         assert not cls._ATTR_TYPE_CLS.get(attr_cls.type, False), \
             "Duplicate definition for {:#06x}".format(attr_cls.type)
         cls._ATTR_TYPE_CLS[attr_cls.type] = attr_cls
@@ -123,6 +139,13 @@ class Message(bytearray):
     @length.setter
     def length(self, value):
         struct.pack_into('>H', self, 2, value)
+
+    @classmethod
+    def attr_name(cls, attr_type):
+        """Get the readable name of an attribute type, if known
+        """
+        attr_cls = cls._ATTR_TYPE_CLS.get(attr_type)
+        return attr_cls.name if attr_cls else "{:#06x}".format(attr_type)
 
     def __repr__(self):
         return ("{}(method={:#05x}, class={:#04x}, length={}, "
@@ -143,6 +166,7 @@ class Message(bytearray):
             "    attributes:",
             ] + ["    \t" + repr(attr) for attr in self._attributes]
             ).format(self, self.transaction_id.encode('hex'))
+
 
 # Decorator shortcut for adding known attribute classes
 attribute = Message.add_attr_cls
@@ -183,12 +207,13 @@ class Attribute(str):
             len(self), str.encode(self, 'hex'))
 
     def __repr__(self):
-        return "{}({})".format(type(self).__name__, str(self))
+        return "{}({})".format(self.name, str(self))
 
 
 class Unknown(Attribute):
     """Base class for dynamically generated unknown STUN attributes
     """
+    name = 'UNKNOWN'
 
     def __str__(self):
         return "type={:#06x}, length={}, value={}".format(
@@ -250,7 +275,7 @@ class MappedAddress(Address):
     """STUN MAPPED-ADDRESS attribute
     :see: http://tools.ietf.org/html/rfc5389#section-15.1
     """
-    type = ATTR_MAPPED_ADDRESS
+    type, name = ATTR_MAPPED_ADDRESS
     _xored = False
 
 
@@ -259,7 +284,7 @@ class XorMappedAddress(Address):
     """STUN XOR-MAPPED-ADDRESS attribute
     :see: http://tools.ietf.org/html/rfc5389#section-15.2
     """
-    type = ATTR_XOR_MAPPED_ADDRESS
+    type, name = ATTR_XOR_MAPPED_ADDRESS
     _xored = True
 
 
@@ -268,7 +293,7 @@ class Username(Attribute):
     """STUN USERNAME attribute
     :see: http://tools.ietf.org/html/rfc5389#section-15.3
     """
-    type = ATTR_USERNAME
+    type, name = ATTR_USERNAME
 
     def __init__(self, data):
         self.username = str.decode(self, 'utf8')
@@ -286,7 +311,7 @@ class MessageIntegrity(Attribute):
     """STUN MESSAGE-INTEGRITY attribute
     :see: http://tools.ietf.org/html/rfc5389#section-15.4
     """
-    type = ATTR_MESSAGE_INTEGRITY
+    type, name = ATTR_MESSAGE_INTEGRITY
     _struct = struct.Struct('20s')
 
     @classmethod
@@ -306,7 +331,7 @@ class Fingerprint(Attribute):
     """STUN FINGERPRINT attribute
     :see: http://tools.ietf.org/html/rfc5389#section-15.5
     """
-    type = ATTR_FINGERPRINT
+    type, name = ATTR_FINGERPRINT
     _struct = struct.Struct('>L')
     _MAGIC = 0x5354554e
 
@@ -329,7 +354,7 @@ class ErrorCode(Attribute):
     """STUN ERROR-CODE attribute
     :see: http://tools.ietf.org/html/rfc5389#section-15.6
     """
-    type = ATTR_ERROR_CODE
+    type, name = ATTR_ERROR_CODE
     _struct = struct.Struct('>2x2B')
 
     def __init__(self, data, err_class, err_number, reason):
@@ -347,11 +372,10 @@ class ErrorCode(Attribute):
         return cls(value, err_class, err_number, reason)
 
     @classmethod
-    def encode(cls, data, value):
-        err_class, err_number, err_reason = value
-        attr_data = struct.pack(cls._VALUE_FORMAT, err_class, err_number)
-        attr_data += err_reason.encode('utf8')
-        return attr_data
+    def encode(cls, msg, err_class, err_number, reason):
+        value = struct.pack(cls._VALUE_FORMAT, err_class, err_number)
+        reason = reason.encode('utf8')
+        return cls(value + reason, err_class, err_number, reason)
 
     def __str__(self):
         return "code={}, reason={!r}".format(self.code, self.reason)
@@ -362,7 +386,7 @@ class Realm(Attribute):
     """STUN REALM attribute
     :see: http://tools.ietf.org/html/rfc5389#section-15.7
     """
-    type = ATTR_REALM
+    type, name = ATTR_REALM
 
     def __init__(self, data):
         self.realm = str.decode(self, 'utf8')
@@ -375,29 +399,28 @@ class Realm(Attribute):
         return repr(self.software)
 
 
-# @stunattribute(ATTRIBUTE_NONCE)
-# class Nonce(MessageAttribute):
-#     """STUN NONCE attribute
-#     :see: http://tools.ietf.org/html/rfc5389#section-15.8
-#     """
-
+@attribute
+class Nonce(Attribute):
+    """STUN NONCE attribute
+    :see: http://tools.ietf.org/html/rfc5389#section-15.8
+    """
+    type, name = ATTR_NONCE
+    _max_length = 763 # less than 128 characters can be up to 763 bytes
 
 @attribute
 class UnknownAttributes(Attribute):
     """STUN UNKNOWN-ATTRIBUTES attribute
     :see: http://tools.ietf.org/html/rfc5389#section-15.9
     """
-    type = ATTR_UNKNOWN_ATTRIBUTES
+    type, name = ATTR_UNKNOWN_ATTRIBUTES
 
     def __init__(self, data, types):
         self.types = types
 
     @classmethod
     def decode(cls, data, offset, length):
-        value = buffer(data, offset, length)
-        num = len(value) / 2
-        types = struct.unpack_from('>{}H'.format(num), data, offset)
-        return cls(value, types)
+        types = struct.unpack_from('>{}H'.format(length // 2), data, offset)
+        return cls(buffer(data, offset, length), types)
 
     @classmethod
     def encode(cls, msg, types):
@@ -405,7 +428,7 @@ class UnknownAttributes(Attribute):
         return cls(struct.pack('>{}H'.format(num), *types), types)
 
     def __str__(self):
-        return str(self.types)
+        return str([("{:#06x}".format(t) for t in self.types)])
 
 
 @attribute
@@ -413,7 +436,7 @@ class Software(Attribute):
     """STUN SOFTWARE attribute
     :see: http://tools.ietf.org/html/rfc5389#section-15.10
     """
-    type = ATTR_SOFTWARE
+    type, name = ATTR_SOFTWARE
 
     def __init__(self, data):
         self.software = str.decode(self, 'utf8')
@@ -460,12 +483,12 @@ if __name__ == '__main__':
 # 
     msg3 = Message.encode(METHOD_BINDING, CLASS_REQUEST)
     print str(msg3).encode('hex')
-    msg3.add_attribute(ATTR_MAPPED_ADDRESS, Address.FAMILY_IPv4, 6666, '192.168.2.1')
-    msg3.add_attribute(ATTR_XOR_MAPPED_ADDRESS, Address.FAMILY_IPv4, 6666, '192.168.2.1')
-    msg3.add_attribute(ATTR_USERNAME, "testuser")
-    msg3.add_attribute(ATTR_MESSAGE_INTEGRITY, 'somerandomkey')
-    msg3.add_attribute(ATTR_SOFTWARE, "Test STUN Agent")
-    msg3.add_attribute(ATTR_FINGERPRINT)
+    msg3.add_attribute(MappedAddress, Address.FAMILY_IPv4, 6666, '192.168.2.1')
+    msg3.add_attribute(XorMappedAddress, Address.FAMILY_IPv4, 6666, '192.168.2.1')
+    msg3.add_attribute(Username, "testuser")
+    msg3.add_attribute(MessageIntegrity, 'somerandomkey')
+    msg3.add_attribute(Software, "Test STUN Agent")
+    msg3.add_attribute(Fingerprint)
 
     print repr(msg3)
     print len(msg3)

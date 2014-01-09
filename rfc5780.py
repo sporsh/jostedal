@@ -6,12 +6,12 @@ import stun
 
 
 # Comprehension-required range (0x0000-0x7FFF):
-ATTR_CHANGE_REQUEST =    0x0003
-ATTR_PADDING =           0x0026
-ATTR_RESPONSE_PORT =     0x0027
+ATTR_CHANGE_REQUEST =    0x0003, "CHANGE-REQUEST"
+ATTR_PADDING =           0x0026, "PADDING"
+ATTR_RESPONSE_PORT =     0x0027, "RESPONSE-PORT"
 # Comprehension-optional range (0x8000-0xFFFF):
-ATTR_RESPONSE_ORIGIN =   0x802b
-ATTR_OTHER_ADDRESS =     0x802c
+ATTR_RESPONSE_ORIGIN =   0x802b, "RESPONSE-ORIGIN"
+ATTR_OTHER_ADDRESS =     0x802c, "OTHER-ADDRESS"
 
 
 @stun.attribute
@@ -19,7 +19,7 @@ class ChangeRequest(stun.Attribute):
     """
     :see: http://tools.ietf.org/html/rfc5780#section-7.2
     """
-    type = ATTR_CHANGE_REQUEST
+    type, name = ATTR_CHANGE_REQUEST
 
     @classmethod
     def decode(cls, data, offset, length):
@@ -34,7 +34,7 @@ class ResponseOrigin(stun.Address):
     """
     :see: http://tools.ietf.org/html/rfc5780#section-7.3
     """
-    type = ATTR_RESPONSE_ORIGIN
+    type, name = ATTR_RESPONSE_ORIGIN
     _xored = True
 
 
@@ -43,7 +43,7 @@ class OtherAddress(stun.Address):
     """
     :see: http://tools.ietf.org/html/rfc5780#section-7.4
     """
-    type = ATTR_OTHER_ADDRESS
+    type, name = ATTR_OTHER_ADDRESS
     _xored = True
 
 @stun.attribute
@@ -51,7 +51,7 @@ class ResponsePort(stun.Attribute):
     """
     :see: http://tools.ietf.org/html/rfc5780#section-7.5
     """
-    type = ATTR_RESPONSE_PORT
+    type, name = ATTR_RESPONSE_PORT
 
     @classmethod
     def decode(cls, data, offset, length):
@@ -64,4 +64,4 @@ class Padding(stun.Attribute):
     """
     :see: http://tools.ietf.org/html/rfc5780#section-7.6
     """
-    type = ATTR_PADDING
+    type, name = ATTR_PADDING

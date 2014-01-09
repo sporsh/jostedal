@@ -1,5 +1,4 @@
 from twisted.internet.protocol import DatagramProtocol
-from pexice.rfc5389_attributes import ATTRIBUTE_ERROR_CODE
 import stun
 
 
@@ -32,7 +31,7 @@ class StunBindingTransaction(object):
         :see: http://tools.ietf.org/html/rfc5389#section-7.3.3
         """
         # 0. check unknown comprehension-required (fail trans if present)
-        unknown_attributes = msg.unknown_required_attributes()
+        unknown_attributes = msg.unknown_comp_required_attrs()
         if unknown_attributes:
             #TODO: notify user about failure in success response
             print "*** ERROR: Unknown comp-required attributes in response", repr(unknown_attributes)
@@ -76,14 +75,13 @@ class StunUdpProtocol(DatagramProtocol):
         # 4. check that class is allowed for method
 
         try:
-            msg = Message.decode(datagram)
+            msg = stun.Message.decode(datagram)
         except Exception as e:
             print "Failed to decode datagram:", e
         else:
             if msg:
                 print "*** RECEIVED", msg.format()
                 self.dispatchMessage(msg, addr)
-
 
 
 class StunUdpClient(StunUdpProtocol):
@@ -98,8 +96,8 @@ class StunUdpClient(StunUdpProtocol):
         :see: http://tools.ietf.org/html/rfc5389#section-7.1
         """
         msg = stun.Message.encode(stun.METHOD_BINDING, stun.CLASS_REQUEST)
-        msg.add_attribute(stun.ATTR_SOFTWARE, software)
-        msg.add_attribute(stun.ATTR_FINGERPRINT)
+        msg.add_attribute(stun.Software, software)
+        msg.add_attribute(stun.Fingerprint)
         self.transactions[msg.transaction_id] = StunBindingTransaction(self, msg)
         print "*** SENDING", msg.format()
         self.transport.write(msg, (host, port))
