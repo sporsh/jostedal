@@ -37,15 +37,7 @@ CLASS_RESPONSE_SUCCESS =    0x10
 CLASS_RESPONSE_ERROR =      0x11
 
 
-FAMILY_IPv4 = 0x01
-FAMILY_IPv6 = 0x02
-_FAMILY_TO_AF_INET = {FAMILY_IPv4: socket.AF_INET,
-                      FAMILY_IPv6: socket.AF_INET6}
-_AF_INET_TO_FAMILY = {socket.AF_INET: FAMILY_IPv4,
-                      socket.AF_INET6: FAMILY_IPv6}
-# Convert to/from STUN FAMILY and AF_INET
-ftoaf = _FAMILY_TO_AF_INET.get
-aftof = _AF_INET_TO_FAMILY.get
+
 
 
 def pad(length):
@@ -202,6 +194,14 @@ class Address(Attribute):
     """
     struct = struct.Struct('>xBH')
 
+    FAMILY_IPv4 = 0x01
+    FAMILY_IPv6 = 0x02
+    # Convert to/from STUN FAMILY and AF_INET
+    ftoaf = {FAMILY_IPv4: socket.AF_INET,
+             FAMILY_IPv6: socket.AF_INET6}.get
+    aftof = {socket.AF_INET: FAMILY_IPv4,
+             socket.AF_INET6: FAMILY_IPv6}.get
+
     def __init__(self, data, family, port, address):
         self.family = family
         self.port = port
@@ -223,13 +223,13 @@ class MappedAddress(Address):
     def decode(cls, data, offset, length):
         family, port = cls.struct.unpack_from(data, offset)
         packed_ip = buffer(data, offset + cls.struct.size, length - cls.struct.size)
-        address = socket.inet_ntop(ftoaf(family), packed_ip)
+        address = socket.inet_ntop(Address.ftoaf(family), packed_ip)
         value = buffer(data, offset, length)
         return cls(value, family, port, address)
 
     @classmethod
     def encode(cls, msg, family, port, address):
-        packed_ip = socket.inet_pton(ftoaf(family), address)
+        packed_ip = socket.inet_pton(Address.ftoaf(family), address)
         value = cls.struct.pack(family, port) + packed_ip
         return cls(value, family, port, address)
 
@@ -250,7 +250,7 @@ class XorMappedAddress(Address):
         magic = bytearray(*struct.unpack_from('>16s', data, 4))
         port = xport ^ magic[0] << 8 ^ magic[1]
         packed_ip = buffer(bytearray(ord(a) ^ b for a, b in zip(xaddress, magic)))
-        address = socket.inet_ntop(ftoaf(family), packed_ip)
+        address = socket.inet_ntop(Address.ftoaf(family), packed_ip)
         value = buffer(data, offset, length)
         return cls(value, family, port, address)
 
@@ -261,7 +261,7 @@ class XorMappedAddress(Address):
         """
         magic = bytearray(*struct.unpack_from('>16s', msg, 4))
         xport = port ^ magic[0] << 8 ^ magic[1]
-        packed_ip = bytearray(socket.inet_pton(ftoaf(family), address))
+        packed_ip = bytearray(socket.inet_pton(Address.ftoaf(family), address))
         xaddress = bytearray(a ^ b for a, b in zip(packed_ip, magic))
         data = cls.struct.pack(family, xport) + xaddress
         return cls(data, family, port, address)
@@ -515,8 +515,8 @@ if __name__ == '__main__':
 # 
     msg3 = StunMessage.encode(METHOD_BINDING, CLASS_REQUEST)
     print str(msg3).encode('hex')
-    msg3.add_attribute(ATTR_MAPPED_ADDRESS, FAMILY_IPv4, 6666, '192.168.2.1')
-    msg3.add_attribute(ATTR_XOR_MAPPED_ADDRESS, FAMILY_IPv4, 6666, '192.168.2.1')
+    msg3.add_attribute(ATTR_MAPPED_ADDRESS, Address.FAMILY_IPv4, 6666, '192.168.2.1')
+    msg3.add_attribute(ATTR_XOR_MAPPED_ADDRESS, Address.FAMILY_IPv4, 6666, '192.168.2.1')
     msg3.add_attribute(ATTR_USERNAME, "testuser")
     msg3.add_attribute(ATTR_MESSAGE_INTEGRITY, 'somerandomkey')
     msg3.add_attribute(ATTR_SOFTWARE, "Test STUN Agent")

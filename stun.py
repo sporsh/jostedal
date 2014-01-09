@@ -2,8 +2,8 @@ from twisted.internet.protocol import DatagramProtocol
 from pexice.rfc5389_attributes import ATTRIBUTE_ERROR_CODE
 from message import CLASS_INDICATION, CLASS_RESPONSE_SUCCESS,\
     CLASS_RESPONSE_ERROR, StunMessage, METHOD_BINDING, ATTR_SOFTWARE,\
-    ATTR_FINGERPRINT, CLASS_REQUEST, ATTR_UNKNOWN_ATTRIBUTES, aftof,\
-    ATTR_XOR_MAPPED_ADDRESS
+    ATTR_FINGERPRINT, CLASS_REQUEST, ATTR_UNKNOWN_ATTRIBUTES,\
+    ATTR_XOR_MAPPED_ADDRESS, Address
 
 AGENT_NAME = "PexICE-0.1.0 'Jostedal'"
 
@@ -143,7 +143,7 @@ class StunUdpServer(StunUdpProtocol):
             attributes.append((ATTR_UNKNOWN_ATTRIBUTES, 0, unknown_attr_types))
         else:
             #success
-            family = aftof(self.transport.addressFamily)
+            family = Address.aftof(self.transport.addressFamily)
             attributes.append((ATTR_XOR_MAPPED_ADDRESS, 0, (family, port, host)))
             response_class = CLASS_RESPONSE_SUCCESS
 
