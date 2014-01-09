@@ -37,7 +37,7 @@ CLASS_RESPONSE_SUCCESS =    0x10
 CLASS_RESPONSE_ERROR =      0x11
 
 
-class StunMessage(bytearray):
+class Message(bytearray):
     """STUN message structure
     :see: http://tools.ietf.org/html/rfc5389#section-6
     """
@@ -143,7 +143,7 @@ class StunMessage(bytearray):
             ).format(self, self.transaction_id.encode('hex'))
 
 # Decorator shortcut for adding known attribute classes
-attribute = StunMessage.add_attr_cls
+attribute = Message.add_attr_cls
 
 
 class Attribute(str):
@@ -335,7 +335,7 @@ class Fingerprint(Attribute):
 
 
 # @stunattribute(ATTRIBUTE_ERROR_CODE)
-# class ErrorCode(StunMessageAttribute):
+# class ErrorCode(MessageAttribute):
 #     """STUN ERROR-CODE attribute
 #     :see: http://tools.ietf.org/html/rfc5389#section-15.6
 #     """
@@ -361,7 +361,7 @@ class Fingerprint(Attribute):
 
 
 # @stunattribute(ATTRIBUTE_REALM)
-# class Realm(StunMessageAttribute):
+# class Realm(MessageAttribute):
 #     """STUN REALM attribute
 #     :see: http://tools.ietf.org/html/rfc5389#section-15.7
 #     """
@@ -375,14 +375,14 @@ class Fingerprint(Attribute):
 
 
 # @stunattribute(ATTRIBUTE_NONCE)
-# class Nonce(StunMessageAttribute):
+# class Nonce(MessageAttribute):
 #     """STUN NONCE attribute
 #     :see: http://tools.ietf.org/html/rfc5389#section-15.8
 #     """
 
 
 # @stunattribute(ATTRIBUTE_UNKNOWN_ATTRIBUTES)
-# class UnknownAttributes(StunMessageAttribute):
+# class UnknownAttributes(MessageAttribute):
 #     """STUN UNKNOWN-ATTRIBUTES attribute
 #     :see: http://tools.ietf.org/html/rfc5389#section-15.9
 #     """
@@ -437,7 +437,7 @@ if __name__ == '__main__':
         "7727000080280004fd824449"))
 #     msg_data = '\x01\x01\x000!\x12\xa4B\xf1\x9b\'\xa4\xac^\xe3v\x16}\xdef\x80"\x00\x16TANDBERG/4120 (X7.2.2)\x00\x00\x00 \x00\x08\x00\x01M\xae\x0f\x01\xb0 \x80(\x00\x04\x15p\x96\xbd'
 #     msg_data = '\x01\x01\x000!\x12\xa4B\x0ef\xc5\xedT\x1c8\xeb\xa7\xaa\xcf:\x80"\x00\x16TANDBERG/4120 (X7.2.2)\x00\x00\x00 \x00\x08\x00\x01\xa5Z\x0f\x01\xb0 \x80(\x00\x04\xf5\xe6\x9b\xfb'
-    msg = StunMessage.decode(msg_data)
+    msg = Message.decode(msg_data)
     print repr(msg)
     print msg.unknown_required_attributes()
 #     for attribute in msg.attributes:
@@ -446,11 +446,11 @@ if __name__ == '__main__':
     print str(msg_data).encode('hex')
 #     print str(msg.encode()).encode('hex')
 
-#     msg2 = StunMessage.decode(str(msg.encode()))
+#     msg2 = Message.decode(str(msg.encode()))
 #     print repr(msg2[:-1])
 #     assert msg == msg2
 # 
-    msg3 = StunMessage.encode(METHOD_BINDING, CLASS_REQUEST)
+    msg3 = Message.encode(METHOD_BINDING, CLASS_REQUEST)
     print str(msg3).encode('hex')
     msg3.add_attribute(ATTR_MAPPED_ADDRESS, Address.FAMILY_IPv4, 6666, '192.168.2.1')
     msg3.add_attribute(ATTR_XOR_MAPPED_ADDRESS, Address.FAMILY_IPv4, 6666, '192.168.2.1')
@@ -461,7 +461,7 @@ if __name__ == '__main__':
 
     print repr(msg3)
     print len(msg3)
-    print repr(StunMessage.decode(str(msg3)))
-#     print StunMessage.decode(str(msg3))
+    print repr(Message.decode(str(msg3)))
+#     print Message.decode(str(msg3))
 
     print msg3.format()

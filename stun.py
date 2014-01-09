@@ -1,7 +1,7 @@
 from twisted.internet.protocol import DatagramProtocol
 from pexice.rfc5389_attributes import ATTRIBUTE_ERROR_CODE
 from message import CLASS_INDICATION, CLASS_RESPONSE_SUCCESS,\
-    CLASS_RESPONSE_ERROR, StunMessage, METHOD_BINDING, ATTR_SOFTWARE,\
+    CLASS_RESPONSE_ERROR, Message, METHOD_BINDING, ATTR_SOFTWARE,\
     ATTR_FINGERPRINT, CLASS_REQUEST, ATTR_UNKNOWN_ATTRIBUTES,\
     ATTR_XOR_MAPPED_ADDRESS, Address
 
@@ -78,7 +78,7 @@ class StunUdpProtocol(DatagramProtocol):
         # 4. check that class is allowed for method
 
         try:
-            msg = StunMessage.decode(datagram)
+            msg = Message.decode(datagram)
         except Exception as e:
             print "Failed to decode datagram:", e
         else:
@@ -99,7 +99,7 @@ class StunUdpClient(StunUdpProtocol):
         """
         :see: http://tools.ietf.org/html/rfc5389#section-7.1
         """
-        msg = StunMessage.encode(METHOD_BINDING, CLASS_REQUEST)
+        msg = Message.encode(METHOD_BINDING, CLASS_REQUEST)
         msg.add_attribute(ATTR_SOFTWARE, software)
         msg.add_attribute(ATTR_FINGERPRINT)
         self.transactions[msg.transaction_id] = StunBindingTransaction(self, msg)
@@ -148,7 +148,7 @@ class StunUdpServer(StunUdpProtocol):
             response_class = CLASS_RESPONSE_SUCCESS
 
         attributes.append((ATTR_FINGERPRINT, 0, 0))
-        response = StunMessage(message.msg_method,
+        response = Message(message.msg_method,
                                response_class,
                                transaction_id=message.transaction_id,
                                attributes=attributes)
