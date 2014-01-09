@@ -2,7 +2,7 @@
 :see: http://tools.ietf.org/html/rfc5780
 """
 import struct
-import message as stun
+import stun
 
 
 # Comprehension-required range (0x0000-0x7FFF):

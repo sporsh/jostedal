@@ -1,5 +1,5 @@
 from twisted.internet.protocol import Protocol
-import message as stun
+import stun
 import hashlib
 import struct
 

@@ -1,17 +1,15 @@
 from twisted.internet.protocol import DatagramProtocol
 from pexice.rfc5389_attributes import ATTRIBUTE_ERROR_CODE
-from message import CLASS_INDICATION, CLASS_RESPONSE_SUCCESS,\
-    CLASS_RESPONSE_ERROR, Message, METHOD_BINDING, ATTR_SOFTWARE,\
-    ATTR_FINGERPRINT, CLASS_REQUEST, ATTR_UNKNOWN_ATTRIBUTES,\
-    ATTR_XOR_MAPPED_ADDRESS, Address
+import stun
+
 
 AGENT_NAME = "PexICE-0.1.0 'Jostedal'"
 
 
 class StunBindingTransaction(object):
-    _HANDLERS = {CLASS_INDICATION: 'handle_INDICATION',
-                 CLASS_RESPONSE_SUCCESS: 'handle_RESPONSE_SUCCESS',
-                 CLASS_RESPONSE_ERROR: 'handle_RESPONSE_ERROR'}
+    _HANDLERS = {stun.CLASS_INDICATION: 'handle_INDICATION',
+                 stun.CLASS_RESPONSE_SUCCESS: 'handle_RESPONSE_SUCCESS',
+                 stun.CLASS_RESPONSE_ERROR: 'handle_RESPONSE_ERROR'}
 
     def __init__(self, agent, request):
         self.agent = agent
@@ -99,9 +97,9 @@ class StunUdpClient(StunUdpProtocol):
         """
         :see: http://tools.ietf.org/html/rfc5389#section-7.1
         """
-        msg = Message.encode(METHOD_BINDING, CLASS_REQUEST)
-        msg.add_attribute(ATTR_SOFTWARE, software)
-        msg.add_attribute(ATTR_FINGERPRINT)
+        msg = stun.Message.encode(stun.METHOD_BINDING, stun.CLASS_REQUEST)
+        msg.add_attribute(stun.ATTR_SOFTWARE, software)
+        msg.add_attribute(stun.ATTR_FINGERPRINT)
         self.transactions[msg.transaction_id] = StunBindingTransaction(self, msg)
         print "*** SENDING", msg.format()
         self.transport.write(msg, (host, port))
@@ -116,7 +114,7 @@ class StunUdpClient(StunUdpProtocol):
 
 
 class StunUdpServer(StunUdpProtocol):
-    _HANDLERS = {CLASS_REQUEST: 'handle_REQUEST',
+    _HANDLERS = {stun.CLASS_REQUEST: 'handle_REQUEST',
                  }
 
     def __init__(self, retransmission_timeout=3., retransmission_continue=7, retransmission_m=16):
@@ -131,24 +129,24 @@ class StunUdpServer(StunUdpProtocol):
         """
         :see: http://tools.ietf.org/html/rfc5389#section-7.3.1
         """
-        attributes = [(ATTR_SOFTWARE, 0, AGENT_NAME)]
+        attributes = [(stun.ATTR_SOFTWARE, 0, AGENT_NAME)]
         # 1. check unknown comprehension-required attributes
         unknown_attributes = message.get_unknown_attributes()
         if unknown_attributes:
             #error
             #    - reply with 420
-            response_class = CLASS_RESPONSE_ERROR
+            response_class = stun.CLASS_RESPONSE_ERROR
             attributes.append((ATTRIBUTE_ERROR_CODE, 0, (4, 20, "Unknown comprehension-required attributes")))
             unknown_attr_types = [attr.type for attr in unknown_attributes]
-            attributes.append((ATTR_UNKNOWN_ATTRIBUTES, 0, unknown_attr_types))
+            attributes.append((stun.ATTR_UNKNOWN_ATTRIBUTES, 0, unknown_attr_types))
         else:
             #success
-            family = Address.aftof(self.transport.addressFamily)
-            attributes.append((ATTR_XOR_MAPPED_ADDRESS, 0, (family, port, host)))
-            response_class = CLASS_RESPONSE_SUCCESS
+            family = stun.Address.aftof(self.transport.addressFamily)
+            attributes.append((stun.ATTR_XOR_MAPPED_ADDRESS, 0, (family, port, host)))
+            response_class = stun.CLASS_RESPONSE_SUCCESS
 
-        attributes.append((ATTR_FINGERPRINT, 0, 0))
-        response = Message(message.msg_method,
+        attributes.append((stun.ATTR_FINGERPRINT, 0, 0))
+        response = stun.Message(message.msg_method,
                                response_class,
                                transaction_id=message.transaction_id,
                                attributes=attributes)
