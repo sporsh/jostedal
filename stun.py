@@ -5,7 +5,7 @@ from message import CLASS_INDICATION, CLASS_RESPONSE_SUCCESS,\
     ATTR_FINGERPRINT, CLASS_REQUEST, ATTR_UNKNOWN_ATTRIBUTES, aftof,\
     ATTR_XOR_MAPPED_ADDRESS
 
-AGENT_NAME = "PexSTUN Agent"
+AGENT_NAME = "PexICE-0.1.0 'Jostedal'"
 
 
 class StunBindingTransaction(object):
@@ -37,7 +37,7 @@ class StunBindingTransaction(object):
         unknown_attributes = msg.unknown_required_attributes()
         if unknown_attributes:
             #TODO: notify user about failure in success response
-            print "BOOM, unknown required attribute", repr(unknown_attributes)
+            print "*** ERROR: Unknown comp-required attributes in response", repr(unknown_attributes)
             return
         # 1. check that XOR-MAPPED-ADDRESS is present
         # 2. check address family (ignore if unknown, may accept IPv6 when sent IPv4)
