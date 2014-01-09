@@ -17,9 +17,9 @@ class BindingTransaction(defer.Deferred):
     def __init__(self, agent):
         defer.Deferred.__init__(self)
         request = stun.Message.encode(stun.METHOD_BINDING, stun.CLASS_REQUEST)
-        request.add_attribute(stun.Software, agent.software)
+        request.add_attr(stun.Software, agent.software)
         agent.credential_mechanism.update(request)
-        request.add_attribute(stun.Fingerprint)
+        request.add_attr(stun.Fingerprint)
 
         self.agent = agent
         self.transaction_id = request.transaction_id
@@ -40,9 +40,11 @@ class BindingTransaction(defer.Deferred):
             # error code 500 -> 599; MAY resend, but MUST limit number of retries
             self.fail(TransactionError(msg))
         elif msg.msg_class == stun.CLASS_RESPONSE_SUCCESS:
-            # 1. check that XOR-MAPPED-ADDRESS is present
-            # 2. check address family (ignore if unknown, may accept IPv6 when sent IPv4)
-            self.succeed(msg)
+            address = msg.get_attr(stun.XorMappedAddress) or msg.get_attr(stun.MappedAddress)
+            if address:
+                self.succeed(str(address))
+            else:
+                self.fail(TransactionError("No Mapped Address in response", msg))
 
 
 class StunUdpProtocol(DatagramProtocol):
@@ -111,8 +113,6 @@ class StunUdpClient(StunUdpProtocol):
 
 class StunUdpServer(StunUdpProtocol):
     PORT = 3478
-    _HANDLERS = {stun.CLASS_REQUEST: 'handle_REQUEST',
-                 }
 
     def __init__(self, retransmission_timeout=3., retransmission_continue=7, retransmission_m=16):
         StunUdpProtocol.__init__(self, retransmission_timeout=retransmission_timeout, retransmission_continue=retransmission_continue, retransmission_m=retransmission_m)
@@ -127,17 +127,17 @@ class StunUdpServer(StunUdpProtocol):
                 response = stun.Message.encode(stun.METHOD_BINDING,
                                                stun.CLASS_RESPONSE_ERROR,
                                                transaction_id=msg.transaction_id)
-                response.add_attribute(stun.ErrorCode, *stun.ERR_UNKNOWN_ATTRIBUTE)
-                response.add_attribute(stun.UnknownAttributes, unknown_attributes)
+                response.add_attr(stun.ErrorCode, *stun.ERR_UNKNOWN_ATTRIBUTE)
+                response.add_attr(stun.UnknownAttributes, unknown_attributes)
             else:
                 response = stun.Message.encode(stun.METHOD_BINDING,
                                                stun.CLASS_RESPONSE_SUCCESS,
                                                transaction_id=msg.transaction_id)
                 family = stun.Address.aftof(self.transport.addressFamily)
-                response.add_attribute(stun.XorMappedAddress, family, port, host)
+                response.add_attr(stun.XorMappedAddress, family, port, host)
 
-            response.add_attribute(stun.Software, AGENT_NAME)
-            response.add_attribute(stun.Fingerprint)
+            response.add_attr(stun.Software, AGENT_NAME)
+            response.add_attr(stun.Fingerprint)
             self.transport.write(response, (host, port))
 
 
@@ -155,8 +155,8 @@ class ShortTermCredentialMechanism(CredentialMechanism):
         self.hmac_key = stun.saslprep(password)
 
     def update(self, msg):
-        msg.add_attribute(stun.Username, self.username)
-        msg.add_attribute(stun.MessageIntegrity, self.hmac_key)
+        msg.add_attr(stun.Username, self.username)
+        msg.add_attr(stun.MessageIntegrity, self.hmac_key)
 
 
 class LongTermCredentialMechanism(CredentialMechanism):
@@ -169,9 +169,9 @@ class LongTermCredentialMechanism(CredentialMechanism):
         self.hmac_key = stun.ha1(username, realm, password)
 
     def update(self, msg):
-        msg.add_attribute(stun.Nonce, self.nonce)
-        msg.add_attribute(stun.Realm, self.realm)
-        msg.add_attribute(stun.MessageIntegrity, self.hmac_key)
+        msg.add_attr(stun.Nonce, self.nonce)
+        msg.add_attr(stun.Realm, self.realm)
+        msg.add_attr(stun.MessageIntegrity, self.hmac_key)
 
 
 def main():

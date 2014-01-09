@@ -94,7 +94,7 @@ class Message(bytearray):
         message.extend(data)
         return message
 
-    def add_attribute(self, attr_cls, *args, **kwargs):
+    def add_attr(self, attr_cls, *args, **kwargs):
         attr = attr_cls.encode(self, *args, **kwargs)
         self.extend(Attribute.struct.pack(attr.type, len(attr)))
         self.extend(attr)
@@ -103,6 +103,10 @@ class Message(bytearray):
         #update length
         self.length = len(self) - self._struct.size
         return attr
+
+    def get_attr(self, attr_cls):
+        for attr in self._attributes:
+            if isinstance(attr, attr_cls): return attr
 
     @classmethod
     def decode(cls, data):
@@ -515,11 +519,11 @@ if __name__ == '__main__':
     print msg_data.encode('hex')
 
     msg3 = Message.encode(METHOD_BINDING, CLASS_REQUEST)
-    msg3.add_attribute(MappedAddress, Address.FAMILY_IPv4, 6666, '192.168.2.1')
-    msg3.add_attribute(XorMappedAddress, Address.FAMILY_IPv4, 6666, '192.168.2.1')
-    msg3.add_attribute(Username, "testuser")
-    msg3.add_attribute(MessageIntegrity, 'somerandomkey')
-    msg3.add_attribute(Software, "Test STUN Agent")
-    msg3.add_attribute(Fingerprint)
+    msg3.add_attr(MappedAddress, Address.FAMILY_IPv4, 6666, '192.168.2.1')
+    msg3.add_attr(XorMappedAddress, Address.FAMILY_IPv4, 6666, '192.168.2.1')
+    msg3.add_attr(Username, "testuser")
+    msg3.add_attr(MessageIntegrity, 'somerandomkey')
+    msg3.add_attr(Software, "Test STUN Agent")
+    msg3.add_attr(Fingerprint)
     print str(msg3).encode('hex')
     print msg3.format()
