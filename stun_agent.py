@@ -10,25 +10,22 @@ class TransactionError(Exception):
     pass
 
 
-class BindingTransaction(defer.Deferred):
+class StunTransaction(defer.Deferred):
     fail = defer.Deferred.errback
     succeed = defer.Deferred.callback
 
-    def __init__(self, agent, addr):
+    def __init__(self, request, addr):
         defer.Deferred.__init__(self)
-        request = stun.Message.encode(stun.METHOD_BINDING, stun.CLASS_REQUEST)
-        request.add_attr(stun.Software, agent.software)
-        agent.credential_mechanism.update(request)
-        request.add_attr(stun.Fingerprint)
-
-        self.addr = addr
         self.transaction_id = request.transaction_id
         self.request = request
+        self.addr = addr
 
     def time_out(self):
         if not self.called:
             self.fail(TransactionError("Timed out"))
 
+
+class BindingTransaction(StunTransaction):
     def message_received(self, msg, addr):
         if msg.msg_method != stun.METHOD_BINDING:
             # TODO: shoud transaction fail at this point?
@@ -86,7 +83,11 @@ class StunUdpClient(StunUdpProtocol):
         """
         :see: http://tools.ietf.org/html/rfc5389#section-7.1
         """
-        transaction = BindingTransaction(self, (host, port))
+        request = stun.Message.encode(stun.METHOD_BINDING, stun.CLASS_REQUEST)
+        request.add_attr(stun.Software, self.software)
+        self.credential_mechanism.update(request)
+        request.add_attr(stun.Fingerprint)
+        transaction = BindingTransaction(request, (host, port))
         self._transactions[transaction.transaction_id] = transaction
         transaction.addBoth(self.transaction_completed, transaction)
         self.send(transaction, self.RTO, self.Rc)

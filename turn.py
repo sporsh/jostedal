@@ -1,7 +1,7 @@
 import stun
 import struct
 import hashlib
-from stun_agent import StunUdpClient, StunUdpServer
+from stun_agent import StunUdpClient, StunUdpServer, StunTransaction
 from twisted.internet import defer
 
 
@@ -146,7 +146,7 @@ class Allocation(object):
     transport_protocol = None
 
     # Authentication information
-    hmac_key = ha1('username', 'realm', 'password')
+    hmac_key = stun.ha1('username', 'realm', 'password')
     nonce = None
 
     time_to_expiry = 10*60
@@ -158,28 +158,7 @@ class Allocation(object):
     class Expired(): pass
 
 
-class AllocateTransaction(defer.Deferred):
-    """
-    :see: http://tools.ietf.org/html/rfc5766#section-6
-    """
-    def __init__(self, agent, transport, time_to_expiry,
-            dont_fragment, even_port, reservation_token):
-        defer.Deferred.__init__(self)
-
-        request = stun.Message.encode(METHOD_ALLOCATE, stun.CLASS_REQUEST)
-        if time_to_expiry:
-            request.add_attr(ATTR_LIFETIME, time_to_expiry)
-        if dont_fragment:
-            request.add_attr(ATTR_DONT_FRAGMENT)
-        if even_port is not None and not reservation_token:
-            request.add_attr(ATTR_EVEN_PORT, even_port)
-        if reservation_token:
-            request.add_attr(ATTR_RESERVATION_TOKEN, even_port)
-
-        self.agent = agent
-        self.transaction_id = request.transaction_id
-        self.request = request
-
+class AllocateTransaction(StunTransaction):
     def message_received(self, msg, addr):
         """
         :see: http://tools.ietf.org/html/rfc5766#section-6.3 - 6.4
@@ -198,17 +177,6 @@ class RefreshTransaction(defer.Deferred):
     """
     :see: http://tools.ietf.org/html/rfc5766#section-7
     """
-    def __init__(self, agent, time_to_expiry):
-        defer.Deferred.__init__(self)
-
-        request = stun.Message.encode(METHOD_ALLOCATE, stun.CLASS_REQUEST)
-        if time_to_expiry:
-            request.add_attr(ATTR_LIFETIME, time_to_expiry)
-
-        self.agent = agent
-        self.transaction_id = request.transaction_id
-        self.request = request
-
     def message_received(self, msg, addr):
         if msg.msg_method != METHOD_REFRESH:
             # TODO: shoud transaction fail at this point?
@@ -223,8 +191,8 @@ class RefreshTransaction(defer.Deferred):
 
 
 class TurnUdpClient(StunUdpClient):
-    def __init__(self, retransmission_timeout=3., retransmission_continue=7, retransmission_m=16):
-        StunUdpClient.__init__(self, retransmission_timeout=retransmission_timeout, retransmission_continue=retransmission_continue, retransmission_m=retransmission_m)
+    def __init__(self):
+        StunUdpClient.__init__(self)
         self.turn_server_domain_name = None
 
     def allocate(self, host, port, transport=TRANSPORT_UDP, time_to_expiry=None,
@@ -233,9 +201,18 @@ class TurnUdpClient(StunUdpClient):
         :param even_port: None | 0 | 1 (1==reserve next highest port number)
         :see: http://tools.ietf.org/html/rfc5766#section-6.1
         """
-        transaction = AllocateTransaction(self, transport, time_to_expiry,
-            dont_fragment, even_port, reservation_token)
-        self.transport.write(transaction.request, (host, port))
+        request = stun.Message.encode(METHOD_ALLOCATE, stun.CLASS_REQUEST)
+        if time_to_expiry:
+            request.add_attr(ATTR_LIFETIME, time_to_expiry)
+        if dont_fragment:
+            request.add_attr(ATTR_DONT_FRAGMENT)
+        if even_port is not None and not reservation_token:
+            request.add_attr(ATTR_EVEN_PORT, even_port)
+        if reservation_token:
+            request.add_attr(ATTR_RESERVATION_TOKEN, even_port)
+
+        transaction = AllocateTransaction(request, (host, port))
+        self.send(transaction, self.RTO, self.Rc)
         self._transactions[transaction.transaction_id] = transaction
         transaction.addCallback(self.transaction_completed, transaction)
 
@@ -244,6 +221,14 @@ class TurnUdpClient(StunUdpClient):
             return Allocation()
 
         return transaction
+
+    def refresh(self, time_to_expiry):
+        """
+        :see: http://tools.ietf.org/html/rfc5766#section-6
+        """
+        request = stun.Message.encode(METHOD_REFRESH, stun.CLASS_REQUEST)
+        if time_to_expiry:
+            request.add_attr(ATTR_LIFETIME, time_to_expiry)
 
     def get_host_transport_address(self):
         pass
