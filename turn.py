@@ -1,8 +1,6 @@
 import stun
 import struct
-import hashlib
-from stun_agent import StunUdpClient, StunUdpServer, StunTransaction
-from twisted.internet import defer
+from stun_agent import StunUdpClient, StunUdpServer
 
 
 MSG_CHANNEL = 0b01
@@ -16,15 +14,15 @@ METHOD_CREATE_PERMISSION =  0x008 # only request/response semantics defined
 METHOD_CHANNEL_BIND =       0x009 # only request/response semantics defined
 
 
-ATTR_CHANNEL_NUMBER =      0x000C, "CHANNEL-NUMBER"
-ATTR_LIFETIME =            0x000D, "LIFETIME"
-ATTR_XOR_PEER_ADDRESS =    0x0012, "XOR-PEER-ADDRESS"
-ATTR_DATA =                0x0013, "DATA"
-ATTR_XOR_RELAYED_ADDRESS = 0x0016, "XOR-RELAYED-ADDRESS"
-ATTR_EVEN_PORT =           0x0018, "EVEN-PORT"
-ATTR_REQUESTED_TRANSPORT = 0x0019, "REQUESTED-TRANSPORT"
-ATTR_DONT_FRAGMENT =       0x001A, "DONT-FRAGMENT"
-ATTR_RESERVATION_TOKEN =   0x0022, "RESERVATION-TOKEN"
+ATTR_CHANNEL_NUMBER =      0x000C
+ATTR_LIFETIME =            0x000D
+ATTR_XOR_PEER_ADDRESS =    0x0012
+ATTR_DATA =                0x0013
+ATTR_XOR_RELAYED_ADDRESS = 0x0016
+ATTR_EVEN_PORT =           0x0018
+ATTR_REQUESTED_TRANSPORT = 0x0019
+ATTR_DONT_FRAGMENT =       0x001A
+ATTR_RESERVATION_TOKEN =   0x0022
 
 
 TRANSPORT_UDP = 0x11
@@ -47,7 +45,7 @@ class ChannelNumber(stun.Attribute):
     @classmethod
     def decode(cls, data, offset, length):
         return struct.unpack_from('>H2x', data, offset)
-    type, name = ATTR_CHANNEL_NUMBER
+    type = ATTR_CHANNEL_NUMBER
 
 
 @stun.attribute
@@ -55,7 +53,7 @@ class Lifetime(stun.Attribute):
     """TURN STUN LIFETIME attribute
     :see: http://tools.ietf.org/html/rfc5766#section-14.2
     """
-    type, name = ATTR_LIFETIME
+    type = ATTR_LIFETIME
 
 
 @stun.attribute
@@ -63,7 +61,7 @@ class XorPeerAddress(stun.Address):
     """TURN STUN XOR-PEER-ADDRESS attribute
     :see: http://tools.ietf.org/html/rfc5766#section-14.3
     """
-    type, name = ATTR_XOR_PEER_ADDRESS
+    type = ATTR_XOR_PEER_ADDRESS
     _xored = True
 
 
@@ -72,7 +70,7 @@ class Data(stun.Attribute):
     """TURN STUN DATA attribute
     :see: http://tools.ietf.org/html/rfc5766#section-14.4
     """
-    type, name = ATTR_DATA
+    type = ATTR_DATA
 
 
 @stun.attribute
@@ -80,7 +78,7 @@ class XorRelayedAddress(stun.Address):
     """TURN STUN XOR-RELAYED-ADDRESS attribute
     :see: http://tools.ietf.org/html/rfc5766#section-14.5
     """
-    type, name = ATTR_XOR_RELAYED_ADDRESS
+    type = ATTR_XOR_RELAYED_ADDRESS
     _xored = True
 
 
@@ -89,7 +87,7 @@ class EvenPort(stun.Attribute):
     """TURN STUN EVEN-PORT attribute
     :see: http://tools.ietf.org/html/rfc5766#section-14.6
     """
-    type, name = ATTR_EVEN_PORT
+    type = ATTR_EVEN_PORT
     RESERVE = 0b10000000
 
     @classmethod
@@ -102,12 +100,20 @@ class RequestedTransport(stun.Attribute):
     """TURN STUN REQUESTED-TRANSPORT attribute
     :see: http://tools.ietf.org/html/rfc5766#section-14.7
     """
-    type, name = ATTR_REQUESTED_TRANSPORT
+    type = ATTR_REQUESTED_TRANSPORT
+    _struct = struct.Struct('>B3x')
+
+    def __init__(self, data, protocol):
+        self.protocol = protocol
+
+    @classmethod
+    def encode(cls, msg, protocol):
+        return cls(cls._struct.pack(protocol), protocol)
 
     @classmethod
     def decode(cls, data, offset, length):
-        protocol, = struct.unpack_from('>B3x', data, offset)
-        return protocol
+        protocol, = cls._struct.unpack_from(data, offset)
+        return cls(buffer(data, offset, length), protocol)
 
 
 @stun.attribute
@@ -115,7 +121,7 @@ class DontFragment(stun.Attribute):
     """
     :see: http://tools.ietf.org/html/rfc5766#section-14.8
     """
-    type, name = ATTR_DONT_FRAGMENT
+    type = ATTR_DONT_FRAGMENT
 
 
 @stun.attribute
@@ -123,7 +129,7 @@ class ReservationToken(stun.Attribute):
     """
     :see: http://tools.ietf.org/html/rfc5766#section-14.9
     """
-    type, name = ATTR_RESERVATION_TOKEN
+    type = ATTR_RESERVATION_TOKEN
 
 
 class StunState(object):
@@ -158,50 +164,35 @@ class Allocation(object):
     class Expired(): pass
 
 
-class AllocateTransaction(StunTransaction):
-    def message_received(self, msg, addr):
-        """
-        :see: http://tools.ietf.org/html/rfc5766#section-6.3 - 6.4
-        """
-        if msg.msg_method != METHOD_ALLOCATE:
-            # TODO: shoud transaction fail at this point?
-            return
-
-        if msg.msg_class == stun.CLASS_RESPONSE_SUCCESS:
-            self.callback(msg.format())
-        elif msg.msg_class == stun.CLASS_RESPONSE_ERROR:
-            self.errback(RuntimeError(msg.format()))
-
-
-class RefreshTransaction(defer.Deferred):
-    """
-    :see: http://tools.ietf.org/html/rfc5766#section-7
-    """
-    def message_received(self, msg, addr):
-        if msg.msg_method != METHOD_REFRESH:
-            # TODO: shoud transaction fail at this point?
-            return
-
-        if msg.msg_class == stun.CLASS_RESPONSE_SUCCESS:
-            self.callback(msg.format())
-        elif msg.msg_class == stun.CLASS_RESPONSE_ERROR:
-            # If time_to_expiry == 0 and error 437 (Allocation Mismatch)
-            # consider transaction a success
-            self.errback(msg.format())
-
-
 class TurnUdpClient(StunUdpClient):
-    def __init__(self):
-        StunUdpClient.__init__(self)
+    def __init__(self, reactor):
+        StunUdpClient.__init__(self, reactor)
         self.turn_server_domain_name = None
 
-    def allocate(self, host, port, transport=TRANSPORT_UDP, time_to_expiry=None,
+        self._handlers.update({
+            # Allocate handlers
+            (METHOD_ALLOCATE, stun.CLASS_RESPONSE_SUCCESS):
+                self._stun_allocate_success,
+            (METHOD_ALLOCATE, stun.CLASS_RESPONSE_ERROR):
+                self._stun_allocate_error,
+            # Refresh handlers
+            (METHOD_REFRESH, stun.CLASS_RESPONSE_SUCCESS):
+                self._stun_refresh_success,
+            (METHOD_REFRESH, stun.CLASS_RESPONSE_ERROR):
+                self._stun_refresh_error,
+            # Data handlers
+            (METHOD_DATA, stun.CLASS_INDICATION):
+                self._stun_data_indication,
+            })
+
+    def allocate(self, addr, transport=TRANSPORT_UDP, time_to_expiry=None,
         dont_fragment=False, even_port=None, reservation_token=None):
         """
         :param even_port: None | 0 | 1 (1==reserve next highest port number)
         :see: http://tools.ietf.org/html/rfc5766#section-6.1
         """
         request = stun.Message.encode(METHOD_ALLOCATE, stun.CLASS_REQUEST)
+        request.add_attr(RequestedTransport, transport)
         if time_to_expiry:
             request.add_attr(ATTR_LIFETIME, time_to_expiry)
         if dont_fragment:
@@ -210,17 +201,7 @@ class TurnUdpClient(StunUdpClient):
             request.add_attr(ATTR_EVEN_PORT, even_port)
         if reservation_token:
             request.add_attr(ATTR_RESERVATION_TOKEN, even_port)
-
-        transaction = AllocateTransaction(request, (host, port))
-        self.send(transaction, self.RTO, self.Rc)
-        self._transactions[transaction.transaction_id] = transaction
-        transaction.addCallback(self.transaction_completed, transaction)
-
-        @transaction.addCallback
-        def allocation_succeeded(result):
-            return Allocation()
-
-        return transaction
+        return self.request(request, addr)
 
     def refresh(self, time_to_expiry):
         """
@@ -236,93 +217,134 @@ class TurnUdpClient(StunUdpClient):
     def get_server_transport_address(self):
         pass #dns srv record of "turn" or "turns"
 
+    def _stun_allocate_success(self, msg, addr):
+        transaction = self._transactions.get(msg.transaction_id)
+        if transaction:
+            relayed_addr = msg.get_attr(ATTR_XOR_RELAYED_ADDRESS)
+            if relayed_addr:
+                transaction.succeed(str(relayed_addr))
+            else:
+                transaction.fail(Exception("No allocation in response"))
 
+    def _stun_allocate_error(self, msg, addr):
+        self._stun_unhandeled(msg, addr)
+
+    def _stun_refresh_success(self, msg, addr):
+        self._stun_unhandeled(msg, addr)
+
+    def _stun_refresh_error(self, msg, addr):
+        # If time_to_expiry == 0 and error 437 (Allocation Mismatch)
+        # consider transaction a success
+        self.errback(msg.format())
+
+    def _stun_data_indication(self, msg, addr):
+        self._stun_unhandeled(msg, addr)
 
 
 class TurnUdpServer(StunUdpServer):
     max_lifetime = 3600
     default_lifetime = 600
 
-    def handle_ALLOCATE_REQUEST(self, message):
+    def __init__(self, reactor, port=3478):
+        StunUdpServer.__init__(self, reactor, port)
+
+        self._handlers.update({
+            # Allocate handlers
+            (METHOD_ALLOCATE, stun.CLASS_REQUEST):
+                self._stun_allocate_request,
+            # Refresh handlers
+            (METHOD_REFRESH, stun.CLASS_REQUEST):
+                self._stun_refresh_request,
+            # Send handlers
+            (METHOD_SEND, stun.CLASS_INDICATION):
+                self._stun_send_indication,
+            })
+
+    def _stun_allocate_request(self, msg, (host, port)):
         """
         :see: http://tools.ietf.org/html/rfc5766#section-6.2
         """
         #TODO: detect retransmission, skip to success response
-
         # 1. require request to be authenticated
         # 2. Check if the 5-tuple is currently in use
         # 3. Check REQUESTED-TRANSPORT attribute
-        requested_transport = message.get_attribute(ATTR_REQUESTED_TRANSPORT)
+        requested_transport = msg.get_attr(ATTR_REQUESTED_TRANSPORT)
         if not requested_transport:
             pass # TODO: reject with 400
-        if requested_transport.value != TRANSPORT_UDP:
+        if requested_transport.protocol != TRANSPORT_UDP:
             pass # TODO: reject with 442
         # 4. handle DONT-FRAGMENT attribute
         # 5. Check RESERVATION-TOKEN attribute
-        reservation_token = message.get_attribute(ATTR_RESERVATION_TOKEN)
-        even_port = message.get_attribute(ATTR_EVEN_PORT)
+        reservation_token = msg.get_attr(ATTR_RESERVATION_TOKEN)
+        even_port = msg.get_attr(ATTR_EVEN_PORT)
         if reservation_token:
             if even_port:
                 pass # TODO: reject with 400
+            relay_addr = self.get_reserved_transport_address(reservation_token)
             # TODO: check that token is in range and has not expired
             # and that corresponding relayed address is still available
             # if token not valid, reject with 508
-        # 6. Check EVEN-PORT
-        if even_port:
-            pass #TODO: if can't allocate relayed transport address, reject with 508
         # 7. reject with 486 if username allocation quota reached
         # 8. reject with 300 if we want to redirect to another server RFC5389
-
-
-        # If not rejected, create allocation
-        allocation = self.create_allocation()
-
-        # Choose a relayed transport address
-        if reservation_token:
-            relayed_address = self.get_reserved_transport_address(reservation_token)
-        if not relayed_address:
-            if even_port.reserve:
-                pass    #TODO: find pair of port-numbers N, N+1 on same IP where
-                        #      N is even, set relayed transport addr with N and
-                        #      reserve N+1 for atleast 30s (until N released)
-                        #      and assign a token to that reservation
-                response.add_attr(ReservationToken, token)
-            elif even_port:
-                pass #TODO: allocate relayed transport address with even port number
-        if not relayed_address:
-            pass #TODO: allocate any available relayed transport address
+        # 6. Check EVEN-PORT
+        else:
+            relay_addr, token = self._allocate_relay_addr(even_port)
 
         # Determine initial time-to-expiry
-        lifetime = message.get_attribute(ATTRIBUTE_LIFETIME)
+        lifetime = msg.get_attr(ATTR_LIFETIME)
         if lifetime:
             time_to_expiry = max(self.default_lifetime, min(self.max_lifetime, lifetime.time_to_expiry))
+        else:
+            time_to_expiry = self.default_lifetime
 
-        response.attributes.append(XorRelayedAddress(relayed_address))
-        response.attributes.append(Lifetime(time_to_expiry))
-        response.attributes.append(XorMappedAddress(fivetuple))
+        response = stun.Message.encode(METHOD_ALLOCATE,
+                                       stun.CLASS_RESPONSE_SUCCESS,
+                                       transaction_id=msg.transaction_id)
 
-        self.sendMessage(response)
+        response.add_attr(XorRelayedAddress, *relay_addr)
+        if token:
+            response.add_attr(ReservationToken, token)
+        response.add_attr(Lifetime, time_to_expiry)
+        family = stun.Address.aftof(self.transport.addressFamily)
+        response.add_attr(stun.XorMappedAddress, family, port, host)
 
+        self.transport.write(response, (host, port))
 
-    def hanlde_ALLOCATE_REFRESH_REQUEST(self, message):
+    def _allocate_relay_addr(self, even_port):
+        """
+        :param even_port: If True, the allocated addres port number will be even
+        :param reserve: Wether to reserve the next port number and assign a token
+                #TODO: find pair of port-numbers N, N+1 on same IP where
+                #      N is even, set relayed transport addr with N and
+                #      reserve N+1 for atleast 30s (until N released)
+                #      and assign a token to that reservation
+        """
+        family = stun.Address.FAMILY_IPv4
+        port = 0
+        address = '0.0.0.0'
+        return (family, port, address), None
+
+    def _stun_refresh_request(self, message):
         """
         :see: http://tools.ietf.org/html/rfc5766#section-7.2
         """
         pass
 
+    def _stun_send_indication(self, msg, addr):
+        pass
 
-if __name__ == '__main__':
+def main():
     from twisted.internet import reactor
 
-    host, port = '23.251.129.121', 3478
+#     addr = '23.251.129.121', 3478
 
-#     server = TurnUdpServer()
-#     host, port = 'localhost', server.start()
+    server = TurnUdpServer(reactor)
+    addr = 'localhost', server.start()
 
-    client = TurnUdpClient()
+    client = TurnUdpClient(reactor)
     client.start()
 
-    d = client.allocate(host, port)
+    d = client.allocate(addr)
     @d.addCallback
     def allocation_succeeded(allocation):
         print "*** Allocation succeeded:", allocation
@@ -334,3 +356,6 @@ if __name__ == '__main__':
         reactor.stop()
 
     reactor.run()
+
+if __name__ == '__main__':
+    main()

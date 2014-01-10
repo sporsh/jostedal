@@ -1,6 +1,6 @@
 import stun
 from twisted.internet.protocol import DatagramProtocol
-from twisted.internet import defer, reactor
+from twisted.internet import defer
 
 
 AGENT_NAME = "PexICE-0.1.0 'Jostedal'"
@@ -25,39 +25,37 @@ class StunTransaction(defer.Deferred):
             self.fail(TransactionError("Timed out"))
 
 
-class BindingTransaction(StunTransaction):
-    def message_received(self, msg, addr):
-        if msg.msg_method != stun.METHOD_BINDING:
-            # TODO: shoud transaction fail at this point?
-            return
-
-        if msg.msg_class == stun.CLASS_INDICATION:
-            pass
-        elif msg.msg_class == stun.CLASS_RESPONSE_ERROR:
-            # 1. unknown comp-req or no ERROR-CODE: transaction simply failed
-            # 2. authentication provcessing (sec. 10)
-            # error code 300 -> 399; SHOULD fail unless ALTERNATE-SERVER (sec 11)
-            # error code 400 -> 499; transaction failed (420, UNKNOWN ATTRIBUTES contain info)
-            # error code 500 -> 599; MAY resend, but MUST limit number of retries
-            self.fail(TransactionError(msg))
-        elif msg.msg_class == stun.CLASS_RESPONSE_SUCCESS:
-            address = msg.get_attr(stun.XorMappedAddress) or msg.get_attr(stun.MappedAddress)
-            if address:
-                self.succeed(str(address))
-            else:
-                self.fail(TransactionError("No Mapped Address in response", msg))
-
-
 class StunUdpProtocol(DatagramProtocol):
     software = AGENT_NAME
-    RTO = .5#3. # retransmission_timeout
-    Rc = 7 # retransmission_continue
-    Rm = 16
-    timeout = Rm * RTO
+
+    def __init__(self, reactor, port, RTO=3., Rc=7, Rm=16):
+        """
+        :param port: UDP port to bind to
+        :param RTO: Retransmission TimeOut (initial value)
+        :param Rc: Retransmission Count (maximum number of request to send)
+        :param Rm: Retransmission Multiplier (timeout = Rm * RTO)
+        """
+        self.reactor = reactor
+        self. port = port
+        self.RTO = .5
+        self.Rc = 7
+        self.timeout = Rm * RTO
+
+        self._handlers = {
+            # Binding handlers
+            (stun.METHOD_BINDING, stun.CLASS_REQUEST):
+                self._stun_binding_request,
+            (stun.METHOD_BINDING, stun.CLASS_INDICATION):
+                self._stun_binding_indication,
+            (stun.METHOD_BINDING, stun.CLASS_RESPONSE_SUCCESS):
+                self._stun_binding_success,
+            (stun.METHOD_BINDING, stun.CLASS_RESPONSE_ERROR):
+                self._stun_binding_error,
+            }
 
     def start(self):
-        from twisted.internet import reactor
-        port = reactor.listenUDP(self.PORT, self)
+        port = self.reactor.listenUDP(self.port, self)
+        print "*** Started {}".format(port)
         return port.port
 
     def datagramReceived(self, datagram, addr):
@@ -68,33 +66,60 @@ class StunUdpProtocol(DatagramProtocol):
             raise
         else:
             if isinstance(msg, stun.Message):
-                print "*** Received STUN", msg.format()
-                self.stun_message_received(msg, addr)
+                self._stun_received(msg, addr)
+
+    def _stun_received(self, msg, addr):
+        handler = self._handlers.get((msg.msg_method, msg.msg_class))
+        if handler:
+            print "*** {} Received STUN".format(self)
+            print msg.format()
+            handler(msg, addr)
+        else:
+            print "*** {} Received unrecognized STUN".format(self)
+            print msg.format()
+
+    def _stun_unhandeled(self, msg, addr):
+        print "*** {} Unhandeled message from {}".format(self, addr)
+        print msg.format()
+
+    def _stun_binding_request(self, msg, addr):
+        self._stun_unhandeled(msg, addr)
+
+    def _stun_binding_indication(self, msg, addr):
+        self._stun_unhandeled(msg, addr)
+
+    def _stun_binding_success(self, msg, addr):
+        self._stun_unhandeled(msg, addr)
+
+    def _stun_binding_error(self, msg, addr):
+        self._stun_unhandeled(msg, addr)
 
 
 class StunUdpClient(StunUdpProtocol):
-    PORT = 0
-
-    def __init__(self):
+    def __init__(self, reactor, port=0):
+        StunUdpProtocol.__init__(self, reactor, port)
         self._transactions = {}
         self.credential_mechanism = CredentialMechanism()
 
-    def bind(self, host, port):
+    def bind(self, addr):
         """
         :see: http://tools.ietf.org/html/rfc5389#section-7.1
         """
         request = stun.Message.encode(stun.METHOD_BINDING, stun.CLASS_REQUEST)
         request.add_attr(stun.Software, self.software)
+        return self.request(request, addr)
+
+    def request(self, request, addr):
         self.credential_mechanism.update(request)
         request.add_attr(stun.Fingerprint)
-        transaction = BindingTransaction(request, (host, port))
+        transaction = StunTransaction(request, addr)
         self._transactions[transaction.transaction_id] = transaction
-        transaction.addBoth(self.transaction_completed, transaction)
+        transaction.addBoth(self._transaction_completed, transaction)
         self.send(transaction, self.RTO, self.Rc)
         return transaction
 
     def send(self, transaction, rto, rc):
-        """Handle UDP retransmission
+        """Send and handle retransmission of STUN transactions
         :param rto: Retransmission TimeOut
         :param rc: Retransmission count, maximum number of requests to send
         :see: http://tools.ietf.org/html/rfc5389#section-7.2.1
@@ -103,41 +128,45 @@ class StunUdpClient(StunUdpProtocol):
             if rc:
                 print "***", transaction, "Sending Request"
                 self.transport.write(transaction.request, transaction.addr)
-                reactor.callLater(rto, self.send, transaction, rto*2, rc-1)
+                self.reactor.callLater(rto, self.send, transaction, rto*2, rc-1)
             else:
                 print "***", transaction, "Time Out in {}s".format(self.timeout)
-                reactor.callLater(self.timeout, transaction.time_out)
+                self.reactor.callLater(self.timeout, transaction.time_out)
 
-    def transaction_completed(self, result, transaction):
+    def _transaction_completed(self, result, transaction):
         del self._transactions[transaction.transaction_id]
         return result
 
-    def stun_message_received(self, msg, addr):
+    def _stun_binding_success(self, msg, addr):
         """
-        :see: http://tools.ietf.org/html/rfc5389#section-7.3.2 - 7.3.4
+        :see: http://tools.ietf.org/html/rfc5389#section-7.3.3
         """
         transaction = self._transactions.get(msg.transaction_id)
         if transaction:
-            unknown_attributes = msg.unknown_comp_required_attrs(stun.IGNORED_ATTRS)
-            if unknown_attributes:
-                transaction.fail(TransactionError("Response contains unknown "
-                    "comprehension-required attributes", unknown_attributes))
+            address = msg.get_attr(stun.ATTR_XOR_MAPPED_ADDRESS, stun.ATTR_MAPPED_ADDRESS)
+            if address:
+                transaction.succeed(str(address))
             else:
-                transaction.message_received(msg, addr)
-        else:
-            print "*** NO SUCH TRANSACTION", msg.transaction_id.encode('hex')
+                transaction.fail(TransactionError("No Mapped Address in response", msg))
+
+    def _stun_binding_error(self, msg, addr):
+        """
+        :see: http://tools.ietf.org/html/rfc5389#section-7.3.4
+        """
+        transaction = self._transactions.get(msg.transaction_id)
+        if transaction:
+        # 2. authentication processing (sec. 10)
+        # error code 300 -> 399; SHOULD fail unless ALTERNATE-SERVER (sec 11)
+        # error code 400 -> 499; transaction failed (420, UNKNOWN ATTRIBUTES contain info)
+        # error code 500 -> 599; MAY resend, but MUST limit number of retries
+            transaction.fail(TransactionError(msg))
 
 
 class StunUdpServer(StunUdpProtocol):
-    PORT = 3478
+    def __init__(self, reactor, port=3478):
+        StunUdpProtocol.__init__(self, reactor, port)
 
-    def send(self, msg, addr):
-        self.transport.write(msg, addr)
-
-    def stun_message_received(self, msg, (host, port)):
-        """
-        :see: http://tools.ietf.org/html/rfc5389#section-7.3.1
-        """
+    def _stun_binding_request(self, msg, (host, port)):
         if msg.msg_class == stun.CLASS_REQUEST:
             unknown_attributes = msg.unknown_comp_required_attrs()
             if unknown_attributes:
@@ -152,10 +181,12 @@ class StunUdpServer(StunUdpProtocol):
                                                transaction_id=msg.transaction_id)
                 family = stun.Address.aftof(self.transport.addressFamily)
                 response.add_attr(stun.XorMappedAddress, family, port, host)
+                response.add_attr(stun.Software, AGENT_NAME)
+                response.add_attr(stun.Fingerprint)
+            self.transport.write(response, (host, port))
 
-            response.add_attr(stun.Software, AGENT_NAME)
-            response.add_attr(stun.Fingerprint)
-            self.send(response, (host, port))
+    def _stun_binding_indication(self, msg, addr):
+        pass
 
 
 class CredentialMechanism(object):
@@ -194,18 +225,18 @@ class LongTermCredentialMechanism(CredentialMechanism):
 def main():
     from twisted.internet import reactor
 
-#     host, port = '23.251.129.121', 3478
-#     host, port = '46.19.20.100', 3478
-#     host, port = '8.34.221.6', 3478
+#     addr = '23.251.129.121', 3478
+#     addr = '46.19.20.100', 3478
+#     addr = '8.34.221.6', 3478
 
-    server = StunUdpServer()
-    host, port = 'localhost', server.start()
-#     host, port = 'localhost', 666
+    server = StunUdpServer(reactor)
+    addr = 'localhost', server.start()
+#     addr = 'localhost', 666
 
-    client = StunUdpClient()
+    client = StunUdpClient(reactor)
     client.start()
 
-    d = client.bind(host, port)
+    d = client.bind(addr)
     @d.addCallback
     def binding_succeeded(binding):
         print "*** Binding succeeded:", binding.format()

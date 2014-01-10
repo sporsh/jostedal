@@ -28,29 +28,29 @@ CLASS_RESPONSE_ERROR =      0x11
 
 # STUN Attribute Registry
 # Comprehension-required range (0x0000-0x7FFF):
-ATTR_MAPPED_ADDRESS =      0x0001, "MAPPED-ADDRESS"
-ATTR_RESPONSE_ADDRESS =    0x0002, "RESPONSE-ADDRESS" # (Reserved)
-ATTR_CHANGE_ADDRESS =      0x0003, "CHANGE-ADDRESS" # (Reserved)
-ATTR_SOURCE_ADDRESS =      0x0004, "SOURCE-ADDRESS" # (Reserved)
-ATTR_CHANGED_ADDRESS =     0x0005, "CHANGED-ADDRESS" # (Reserved)
-ATTR_USERNAME =            0x0006, "USERNAME"
-ATTR_PASSWORD =            0x0007, "PASSWORD" # (Reserved)
-ATTR_MESSAGE_INTEGRITY =   0x0008, "MESSAGE-INTEGRITY"
-ATTR_ERROR_CODE =          0x0009, "ERROR-CODE"
-ATTR_UNKNOWN_ATTRIBUTES =  0x000A, "UNKNOWN-ATTRIBUTES"
-ATTR_REFLECTED_FROM =      0x000B, "REFLECTED-FROM" # (Reserved)
-ATTR_REALM =               0x0014, "REALM"
-ATTR_NONCE =               0x0015, "NONCE"
-ATTR_XOR_MAPPED_ADDRESS =  0x0020, "XOR-MAPPED-ADDRESS"
+ATTR_MAPPED_ADDRESS =      0x0001
+ATTR_RESPONSE_ADDRESS =    0x0002 # (Reserved)
+ATTR_CHANGE_ADDRESS =      0x0003 # (Reserved)
+ATTR_SOURCE_ADDRESS =      0x0004 # (Reserved)
+ATTR_CHANGED_ADDRESS =     0x0005 # (Reserved)
+ATTR_USERNAME =            0x0006
+ATTR_PASSWORD =            0x0007 # (Reserved)
+ATTR_MESSAGE_INTEGRITY =   0x0008
+ATTR_ERROR_CODE =          0x0009
+ATTR_UNKNOWN_ATTRIBUTES =  0x000A
+ATTR_REFLECTED_FROM =      0x000B # (Reserved)
+ATTR_REALM =               0x0014
+ATTR_NONCE =               0x0015
+ATTR_XOR_MAPPED_ADDRESS =  0x0020
 # Comprehension-optional range (0x8000-0xFFFF):
-ATTR_SOFTWARE =            0x8022, "SOFTWARE"
-ATTR_ALTERNATE_SERVER =    0x8023, "ALTERNATE-SERVER"
-ATTR_FINGERPRINT =         0x8028, "FINGERPRINT"
+ATTR_SOFTWARE =            0x8022
+ATTR_ALTERNATE_SERVER =    0x8023
+ATTR_FINGERPRINT =         0x8028
 
 # Ignored comprehension required attributes for RFC 3489 compability
-IGNORED_ATTRS = [ATTR_RESPONSE_ADDRESS[0], ATTR_CHANGE_ADDRESS[0],
-                 ATTR_SOURCE_ADDRESS[0], ATTR_CHANGED_ADDRESS[0],
-                 ATTR_PASSWORD[0], ATTR_REFLECTED_FROM[0]]
+IGNORED_ATTRS = [ATTR_RESPONSE_ADDRESS, ATTR_CHANGE_ADDRESS,
+                 ATTR_SOURCE_ADDRESS, ATTR_CHANGED_ADDRESS,
+                 ATTR_PASSWORD, ATTR_REFLECTED_FROM]
 
 # Error codes (class, number) and recommended reason phrases:
 ERR_TRY_ALTERNATE =     3, 0, "Try Alternate"
@@ -104,9 +104,10 @@ class Message(bytearray):
         self.length = len(self) - self._struct.size
         return attr
 
-    def get_attr(self, attr_cls):
+    def get_attr(self, *attr_types):
         for attr in self._attributes:
-            if isinstance(attr, attr_cls): return attr
+            if attr.type in attr_types:
+                return attr
 
     @classmethod
     def decode(cls, data):
@@ -147,7 +148,7 @@ class Message(bytearray):
     def add_attr_cls(cls, attr_cls):
         """Decorator to add a Stun Attribute as an recognized attribute type
         """
-        print "*** Registered attribute {0.type:#06x}={0.name}".format(attr_cls)
+        print "*** Registered attribute {0.type:#06x}={0.__name__}".format(attr_cls)
         assert not cls._ATTR_TYPE_CLS.get(attr_cls.type, False), \
             "Duplicate definition for {:#06x}".format(attr_cls.type)
         cls._ATTR_TYPE_CLS[attr_cls.type] = attr_cls
@@ -174,7 +175,7 @@ class Message(bytearray):
         """Get the readable name of an attribute type, if known
         """
         attr_cls = cls._ATTR_TYPE_CLS.get(attr_type)
-        return attr_cls.name if attr_cls else "{:#06x}".format(attr_type)
+        return attr_cls.__name__ if attr_cls else "{:#06x}".format(attr_type)
 
     def __repr__(self):
         return ("{}(method={:#05x}, class={:#04x}, length={}, "
@@ -236,14 +237,12 @@ class Attribute(str):
             len(self), str.encode(self, 'hex'))
 
     def __repr__(self):
-        return "{}({})".format(self.name, str(self))
+        return "{}({})".format(type(self).__name__, str(self))
 
 
 class Unknown(Attribute):
     """Base class for dynamically generated unknown STUN attributes
     """
-    name = 'UNKNOWN'
-
     def __str__(self):
         return "type={:#06x}, length={}, value={}".format(
             self.type, len(self), str.encode(self, 'hex'))
@@ -304,7 +303,7 @@ class MappedAddress(Address):
     """
     :see: http://tools.ietf.org/html/rfc5389#section-15.1
     """
-    type, name = ATTR_MAPPED_ADDRESS
+    type = ATTR_MAPPED_ADDRESS
     _xored = False
 
 
@@ -313,7 +312,7 @@ class Username(Attribute):
     """
     :see: http://tools.ietf.org/html/rfc5389#section-15.3
     """
-    type, name = ATTR_USERNAME
+    type = ATTR_USERNAME
 
     def __init__(self, data):
         self.username = str.decode(self, 'utf8')
@@ -331,7 +330,7 @@ class MessageIntegrity(Attribute):
     """
     :see: http://tools.ietf.org/html/rfc5389#section-15.4
     """
-    type, name = ATTR_MESSAGE_INTEGRITY
+    type = ATTR_MESSAGE_INTEGRITY
     _struct = struct.Struct('20s')
 
     @classmethod
@@ -351,7 +350,7 @@ class ErrorCode(Attribute):
     """
     :see: http://tools.ietf.org/html/rfc5389#section-15.6
     """
-    type, name = ATTR_ERROR_CODE
+    type = ATTR_ERROR_CODE
     _struct = struct.Struct('>2x2B')
 
     def __init__(self, data, err_class, err_number, reason):
@@ -383,7 +382,7 @@ class UnknownAttributes(Attribute):
     """
     :see: http://tools.ietf.org/html/rfc5389#section-15.9
     """
-    type, name = ATTR_UNKNOWN_ATTRIBUTES
+    type = ATTR_UNKNOWN_ATTRIBUTES
 
     def __init__(self, data, types):
         self.types = types
@@ -407,7 +406,7 @@ class Realm(Attribute):
     """
     :see: http://tools.ietf.org/html/rfc5389#section-15.7
     """
-    type, name = ATTR_REALM
+    type = ATTR_REALM
 
     def __init__(self, data):
         self.realm = str.decode(self, 'utf8')
@@ -425,7 +424,7 @@ class Nonce(Attribute):
     """
     :see: http://tools.ietf.org/html/rfc5389#section-15.8
     """
-    type, name = ATTR_NONCE
+    type = ATTR_NONCE
     _max_length = 763 # less than 128 characters can be up to 763 bytes
 
 
@@ -434,7 +433,7 @@ class XorMappedAddress(Address):
     """
     :see: http://tools.ietf.org/html/rfc5389#section-15.2
     """
-    type, name = ATTR_XOR_MAPPED_ADDRESS
+    type = ATTR_XOR_MAPPED_ADDRESS
     _xored = True
 
 
@@ -443,7 +442,7 @@ class Software(Attribute):
     """
     :see: http://tools.ietf.org/html/rfc5389#section-15.10
     """
-    type, name = ATTR_SOFTWARE
+    type = ATTR_SOFTWARE
 
     def __init__(self, data):
         self.software = str.decode(self, 'utf8')
@@ -461,7 +460,7 @@ class AlternateServer(Address):
     """
     :see: http://tools.ietf.org/html/rfc5389#section-15.11
     """
-    type, name = ATTR_ALTERNATE_SERVER
+    type = ATTR_ALTERNATE_SERVER
 
 
 @attribute
@@ -469,7 +468,7 @@ class Fingerprint(Attribute):
     """
     :see: http://tools.ietf.org/html/rfc5389#section-15.5
     """
-    type, name = ATTR_FINGERPRINT
+    type = ATTR_FINGERPRINT
     _struct = struct.Struct('>L')
     _MAGIC = 0x5354554e
 
