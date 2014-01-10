@@ -1,6 +1,6 @@
 import stun
 from twisted.internet.protocol import DatagramProtocol
-from twisted.internet import defer
+from twisted.internet import defer, reactor
 
 
 AGENT_NAME = "PexICE-0.1.0 'Jostedal'"
@@ -14,16 +14,20 @@ class BindingTransaction(defer.Deferred):
     fail = defer.Deferred.errback
     succeed = defer.Deferred.callback
 
-    def __init__(self, agent):
+    def __init__(self, agent, addr):
         defer.Deferred.__init__(self)
         request = stun.Message.encode(stun.METHOD_BINDING, stun.CLASS_REQUEST)
         request.add_attr(stun.Software, agent.software)
         agent.credential_mechanism.update(request)
         request.add_attr(stun.Fingerprint)
 
-        self.agent = agent
+        self.addr = addr
         self.transaction_id = request.transaction_id
         self.request = request
+
+    def time_out(self):
+        if not self.called:
+            self.fail(TransactionError("Timed out"))
 
     def message_received(self, msg, addr):
         if msg.msg_method != stun.METHOD_BINDING:
@@ -49,10 +53,10 @@ class BindingTransaction(defer.Deferred):
 
 class StunUdpProtocol(DatagramProtocol):
     software = AGENT_NAME
-
-    def __init__(self, retransmission_timeout=3., retransmission_continue=7, retransmission_m=16):
-        self.retransmision_timeout = retransmission_timeout
-        self.retransmission_continue = retransmission_continue
+    RTO = .5#3. # retransmission_timeout
+    Rc = 7 # retransmission_continue
+    Rm = 16
+    timeout = Rm * RTO
 
     def start(self):
         from twisted.internet import reactor
@@ -74,22 +78,34 @@ class StunUdpProtocol(DatagramProtocol):
 class StunUdpClient(StunUdpProtocol):
     PORT = 0
 
-    def __init__(self, retransmission_timeout=3., retransmission_continue=7, retransmission_m=16):
-        StunUdpProtocol.__init__(self, retransmission_timeout=retransmission_timeout,
-                                 retransmission_continue=retransmission_continue,
-                                 retransmission_m=retransmission_m)
+    def __init__(self):
         self._transactions = {}
-        self.credential_mechanism = ShortTermCredentialMechanism('username', 'password')
+        self.credential_mechanism = CredentialMechanism()
 
     def bind(self, host, port):
         """
         :see: http://tools.ietf.org/html/rfc5389#section-7.1
         """
-        transaction = BindingTransaction(self)
-        self.transport.write(transaction.request, (host, port))
+        transaction = BindingTransaction(self, (host, port))
         self._transactions[transaction.transaction_id] = transaction
         transaction.addBoth(self.transaction_completed, transaction)
+        self.send(transaction, self.RTO, self.Rc)
         return transaction
+
+    def send(self, transaction, rto, rc):
+        """Handle UDP retransmission
+        :param rto: Retransmission TimeOut
+        :param rc: Retransmission count, maximum number of requests to send
+        :see: http://tools.ietf.org/html/rfc5389#section-7.2.1
+        """
+        if not transaction.called:
+            if rc:
+                print "***", transaction, "Sending Request"
+                self.transport.write(transaction.request, transaction.addr)
+                reactor.callLater(rto, self.send, transaction, rto*2, rc-1)
+            else:
+                print "***", transaction, "Time Out in {}s".format(self.timeout)
+                reactor.callLater(self.timeout, transaction.time_out)
 
     def transaction_completed(self, result, transaction):
         del self._transactions[transaction.transaction_id]
@@ -114,8 +130,8 @@ class StunUdpClient(StunUdpProtocol):
 class StunUdpServer(StunUdpProtocol):
     PORT = 3478
 
-    def __init__(self, retransmission_timeout=3., retransmission_continue=7, retransmission_m=16):
-        StunUdpProtocol.__init__(self, retransmission_timeout=retransmission_timeout, retransmission_continue=retransmission_continue, retransmission_m=retransmission_m)
+    def send(self, msg, addr):
+        self.transport.write(msg, addr)
 
     def stun_message_received(self, msg, (host, port)):
         """
@@ -138,7 +154,7 @@ class StunUdpServer(StunUdpProtocol):
 
             response.add_attr(stun.Software, AGENT_NAME)
             response.add_attr(stun.Fingerprint)
-            self.transport.write(response, (host, port))
+            self.send(response, (host, port))
 
 
 class CredentialMechanism(object):
@@ -177,12 +193,13 @@ class LongTermCredentialMechanism(CredentialMechanism):
 def main():
     from twisted.internet import reactor
 
-    host, port = '23.251.129.121', 3478
+#     host, port = '23.251.129.121', 3478
 #     host, port = '46.19.20.100', 3478
 #     host, port = '8.34.221.6', 3478
 
-#     server = StunUdpServer()
-#     host, port = 'localhost', server.start()
+    server = StunUdpServer()
+    host, port = 'localhost', server.start()
+#     host, port = 'localhost', 666
 
     client = StunUdpClient()
     client.start()
