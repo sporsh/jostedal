@@ -1,6 +1,7 @@
 import stun
 import struct
-from stun_agent import StunUdpClient, StunUdpServer
+from stun_agent import StunUdpClient, StunUdpServer, TransactionError,\
+    LongTermCredentialMechanism, CredentialMechanism
 
 
 MSG_CHANNEL = 0b01
@@ -115,6 +116,9 @@ class RequestedTransport(stun.Attribute):
         protocol, = cls._struct.unpack_from(data, offset)
         return cls(buffer(data, offset, length), protocol)
 
+    def __repr__(self, *args, **kwargs):
+        return "REQUESTED-TRANSPORT({:#02x})".format(self.protocol)
+
 
 @stun.attribute
 class DontFragment(stun.Attribute):
@@ -159,15 +163,100 @@ class Allocation(object):
     permissions = []#[(ipaddr, lifetime),...]
     channel_to_peer_bindings = []
 
-    class Authenticating(): pass
-    class Open(): pass
-    class Expired(): pass
+    def get_hmac_key(self, realm):
+        return stun.ha1('username', realm, 'password')
+
+
+class Allocation_UnAllocated():
+    def __init__(self, host, port, transport=TRANSPORT_UDP, time_to_expiry=None):
+        self.auth = CredentialMechanism()
+
+    def allocate(self):
+        pass
+
+    def _stun_allocate_error(self, response):
+        error_code = response.get_attr(stun.ATTR_ERROR_CODE)
+        realm = response.get_attr(stun.ATTR_REALM)
+        nonce = response.get_attr(stun.ATTR_NONCE)
+        if (error_code.code == stun.ERR_UNAUTHORIZED
+            and realm != self.realm
+            and nonce != self.nonce):
+            # Unauthorized, and got new auth info
+            hmac_key = self._get_hmac_key(realm)
+            self.allocate()
+
+    def _stun_allocation_succeess(self, response):
+        self.state_data.relay_transport_address = response.get_attr(ATTR_XOR_RELAYED_ADDRESS)
+        return Allocation_Allocated(self.state_data)
+
+    def _get_hmac_key(self, realm):
+        return stun.ha1('username', realm, 'password')
+
+class Allocation_Allocated():
+    def refresh(self, time_to_expiry):
+        pass
+
+    def delete(self):
+        self.refresh(time_to_expiry=0)
+
+    def _stun_refresh_error(self, reason):
+        pass
+
+    def _stun_refresh_success(self, result):
+        pass
+
+    def create_permission(self):
+        pass
+
+    def _stun_create_permission_error(self, response):
+        pass
+
+    def _stun_create_permission_success(self, response):
+        pass
+
+    def send(self):
+        pass
+
+    def _stun_data(self, indication):
+        pass
+
+    def channel_bind(self):
+        pass
+
+    def _stun_channel_bind_error(self, response):
+        pass
+
+    def _stun_channel_bind_success(self, response):
+        pass
 
 
 class TurnUdpClient(StunUdpClient):
+    class UnAllocated():
+        allocate = None
+
+    class Allocating():
+        _stun_allocate_success = None
+        _stun_allocate_error = None
+
+    class Allocated():
+        refresh = None
+        _stun_refresh_success = None
+        _stun_refresh_error = None
+        create_permission = None
+        _stun_create_permission_success = None
+        _stun_create_permission_error = None
+        send = None
+        _stun_data = None
+        channel_bind = None
+        _stun_channel_bind_success = None
+        _stun_channel_bind_error = None
+
+    class Expired(): pass
+
     def __init__(self, reactor):
         StunUdpClient.__init__(self, reactor)
         self.turn_server_domain_name = None
+        self.allocation = None
 
         self._handlers.update({
             # Allocate handlers
@@ -201,7 +290,14 @@ class TurnUdpClient(StunUdpClient):
             request.add_attr(ATTR_EVEN_PORT, even_port)
         if reservation_token:
             request.add_attr(ATTR_RESERVATION_TOKEN, even_port)
-        return self.request(request, addr)
+        transaction = self.request(request, addr)
+        transaction.addErrback
+        def retry(failure):
+            nonce = failure.value.get_attr(stun.ATTR_NONCE)
+            realm = str(failure.value.get_attr(stun.ATTR_REALM))
+            self.credential_mechanism = LongTermCredentialMechanism(nonce, realm, 'username', 'password')
+            print self.credential_mechanism
+            transaction.addCallback(lambda result: self.allocate(addr))
 
     def refresh(self, time_to_expiry):
         """
@@ -224,10 +320,20 @@ class TurnUdpClient(StunUdpClient):
             if relayed_addr:
                 transaction.succeed(str(relayed_addr))
             else:
-                transaction.fail(Exception("No allocation in response"))
+                transaction.fail(TransactionError("No allocation in response"))
 
     def _stun_allocate_error(self, msg, addr):
-        self._stun_unhandeled(msg, addr)
+        transaction = self._transactions.get(msg.transaction_id)
+        if transaction:
+            error_code = msg.get_attr(stun.ATTR_ERROR_CODE)
+            if not isinstance(self.credential_mechanism, LongTermCredentialMechanism):
+                nonce = msg.get_attr(stun.ATTR_NONCE)
+                realm = str(msg.get_attr(stun.ATTR_REALM))
+                self.credential_mechanism = LongTermCredentialMechanism(nonce, realm, 'username', 'password')
+                print self.credential_mechanism
+                transaction.addCallback(lambda result: self.allocate(addr))
+            else:
+                transaction.fail(TransactionError(error_code))
 
     def _stun_refresh_success(self, msg, addr):
         self._stun_unhandeled(msg, addr)
@@ -336,10 +442,10 @@ class TurnUdpServer(StunUdpServer):
 def main():
     from twisted.internet import reactor
 
-#     addr = '23.251.129.121', 3478
+    addr = '23.251.129.121', 3478
 
-    server = TurnUdpServer(reactor)
-    addr = 'localhost', server.start()
+#     server = TurnUdpServer(reactor)
+#     addr = 'localhost', server.start()
 
     client = TurnUdpClient(reactor)
     client.start()
@@ -353,9 +459,15 @@ def main():
         print "*** Allocation failed:", failure
     @d.addBoth
     def stop(result):
-        reactor.stop()
+        pass #reactor.stop()
 
     reactor.run()
 
+def runserver():
+    from twisted.internet import reactor
+    server = TurnUdpServer(reactor, port=6666)
+    server.start()
+    reactor.run()
+
 if __name__ == '__main__':
-    main()
+    runserver()

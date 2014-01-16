@@ -232,19 +232,16 @@ class Attribute(str):
         #Comprehension-required attributes are in range 0x0000-0x7fff
         return self.type < 0x8000
 
-    def __str__(self):
-        return "length={}, value={}".format(
-            len(self), str.encode(self, 'hex'))
-
-    def __repr__(self):
-        return "{}({})".format(type(self).__name__, str(self))
+#     def __repr__(self):
+#         return "{}(length={}, value={})".format(type(self).__name__, len(self),
+#                                                 str.encode(self, 'hex'))
 
 
 class Unknown(Attribute):
     """Base class for dynamically generated unknown STUN attributes
     """
-    def __str__(self):
-        return "type={:#06x}, length={}, value={}".format(
+    def __repr__(self):
+        return "UNKNOWN(type={:#06x}, length={}, value={})".format(
             self.type, len(self), str.encode(self, 'hex'))
 
 
@@ -293,9 +290,9 @@ class Address(Attribute):
         data = cls.struct.pack(family, port) + packed_ip
         return cls(data, family, port, address)
 
-    def __str__(self):
-        return "family={:#04x}, port={}, address={!r}".format(
-            self.family, self.port, self.address)
+    def __repr__(self):
+        return "{}(family={:#04x}, port={}, address={!r})".format(
+            type(self).__name__, self.family, self.port, self.address)
 
 
 @attribute
@@ -314,15 +311,12 @@ class Username(Attribute):
     """
     type = ATTR_USERNAME
 
-    def __init__(self, data):
-        self.username = str.decode(self, 'utf8')
-
     @classmethod
     def encode(cls, msg, username):
         return cls(username.encode('utf8'))
 
-    def __str__(self):
-        return repr(self.username)
+    def __repr__(self, *args, **kwargs):
+        return "USERNAME({!r})".format(str(self))
 
 
 @attribute
@@ -344,6 +338,9 @@ class MessageIntegrity(Attribute):
         value = hmac.new(key, msg, hashlib.sha1).digest()
         return cls(value)
 
+    def __repr__(self):
+        return "MESSAGE-INTEGRITY({})".format(str.encode(self, 'hex'))
+
 
 @attribute
 class ErrorCode(Attribute):
@@ -356,7 +353,7 @@ class ErrorCode(Attribute):
     def __init__(self, data, err_class, err_number, reason):
         self.err_class = err_class
         self.err_number = err_number
-        self.code = err_class * 10 + err_number
+        self.code = err_class * 100 + err_number
         self.reason = str(reason).decode('utf8')
 
     @classmethod
@@ -369,12 +366,12 @@ class ErrorCode(Attribute):
 
     @classmethod
     def encode(cls, msg, err_class, err_number, reason):
-        value = struct.pack(cls._VALUE_FORMAT, err_class, err_number)
+        value = cls._struct.pack(err_class, err_number)
         reason = reason.encode('utf8')
         return cls(value + reason, err_class, err_number, reason)
 
-    def __str__(self):
-        return "code={}, reason={!r}".format(self.code, self.reason)
+    def __repr__(self):
+        return "ERROR-CODE(code={}, reason={!r})".format(self.code, self.reason)
 
 
 @attribute
@@ -397,8 +394,9 @@ class UnknownAttributes(Attribute):
         num = len(types)
         return cls(struct.pack('>{}H'.format(num), *types), types)
 
-    def __str__(self):
-        return str([("{:#06x}".format(t) for t in self.types)])
+    def __repr__(self):
+        return "UNKNOWN-ATTRIBUTES({})".format(
+            str(["{:#06x}".format(t) for t in self.types]))
 
 
 @attribute
@@ -408,15 +406,12 @@ class Realm(Attribute):
     """
     type = ATTR_REALM
 
-    def __init__(self, data):
-        self.realm = str.decode(self, 'utf8')
-
     @classmethod
-    def encode(cls, data, realm):
+    def encode(cls, msg, realm):
         return cls(realm.encode('utf8'))
 
-    def __str__(self):
-        return repr(self.realm)
+    def __repr__(self):
+        return "REALM({})".format(str.__repr__(self))
 
 
 @attribute
@@ -426,6 +421,9 @@ class Nonce(Attribute):
     """
     type = ATTR_NONCE
     _max_length = 763 # less than 128 characters can be up to 763 bytes
+
+    def __repr__(self):
+        return "NONCE({})".format(str.__repr__(self))
 
 
 @attribute
@@ -444,15 +442,12 @@ class Software(Attribute):
     """
     type = ATTR_SOFTWARE
 
-    def __init__(self, data):
-        self.software = str.decode(self, 'utf8')
-
     @classmethod
     def encode(cls, msg, software):
         return cls(software.encode('utf8'))
 
-    def __str__(self):
-        return repr(self.software)
+    def __repr__(self):
+        return "SOFTWARE({})".format(str.__repr__(self))
 
 
 @attribute
@@ -485,6 +480,8 @@ class Fingerprint(Attribute):
         fingerprint, = cls._struct.unpack_from(data, offset)
         return cls(buffer(data, offset, length), fingerprint)
 
+    def __repr__(self, *args, **kwargs):
+        return "FINGERPRINT(0x{})".format(str.encode(self, 'hex'))
 
 if __name__ == '__main__':
     msg_data = (
@@ -495,6 +492,17 @@ if __name__ == '__main__':
         '0af0d7b48022001a4369747269782d31'
         '2e382e372e302027426c61636b20446f'
         '7727000080280004fd824449'
+        ).decode('hex')
+
+    msg_data = (
+        '011300602112a442fedcb2d51f23946d'
+        '9cc9754e0009001000000401556e6175'
+        '74686f72697365640015001036303332'
+        '3763313731343561373738380014000a'
+        '7765627274632e6f72678e4f8022001a'
+        '4369747269782d312e382e372e302027'
+        '426c61636b20446f77270004'
+        '802800045a4c0c70' # Fingerprint
         ).decode('hex')
 
 #     msg_data = (
@@ -518,11 +526,18 @@ if __name__ == '__main__':
     print msg_data.encode('hex')
 
     msg3 = Message.encode(METHOD_BINDING, CLASS_REQUEST)
-    msg3.add_attr(MappedAddress, Address.FAMILY_IPv4, 6666, '192.168.2.1')
-    msg3.add_attr(XorMappedAddress, Address.FAMILY_IPv4, 6666, '192.168.2.1')
-    msg3.add_attr(Username, "testuser")
-    msg3.add_attr(MessageIntegrity, 'somerandomkey')
-    msg3.add_attr(Software, "Test STUN Agent")
+    msg3.add_attr(type('Foo', (Unknown,), {'type': 0x6666}), 'data')
+    msg3.add_attr(MappedAddress, Address.FAMILY_IPv4, 1337, '192.168.2.255')
+    msg3.add_attr(Username, "johndoe")
+    msg3.add_attr(MessageIntegrity, ha1('username', 'realm', 'password'))
+    msg3.add_attr(ErrorCode, *ERR_SERVER_ERROR)
+    msg3.add_attr(UnknownAttributes, [0x1337, 0xb00b, 0xbeef])
+    msg3.add_attr(Realm, "pexip.com")
+    msg3.add_attr(Nonce, '36303332376331373134356137373838'.decode('hex'))
+    msg3.add_attr(XorMappedAddress, Address.FAMILY_IPv4, 1337, '192.168.2.255')
+    msg3.add_attr(Software, u"\u8774\u8776 h\xfadi\xe9 'butterfly'")
+    msg3.add_attr(AlternateServer, Address.FAMILY_IPv4, 8008, '192.168.2.128')
     msg3.add_attr(Fingerprint)
     print str(msg3).encode('hex')
     print msg3.format()
+    print Message.decode(str(msg3)).format()

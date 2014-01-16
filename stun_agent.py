@@ -72,6 +72,7 @@ class StunUdpProtocol(DatagramProtocol):
         handler = self._handlers.get((msg.msg_method, msg.msg_class))
         if handler:
             print "*** {} Received STUN".format(self)
+            print str(msg).encode('hex')
             print msg.format()
             handler(msg, addr)
         else:
@@ -116,6 +117,7 @@ class StunUdpClient(StunUdpProtocol):
         self._transactions[transaction.transaction_id] = transaction
         transaction.addBoth(self._transaction_completed, transaction)
         self.send(transaction, self.RTO, self.Rc)
+        print request.format()
         return transaction
 
     def send(self, transaction, rto, rc):
@@ -126,7 +128,7 @@ class StunUdpClient(StunUdpProtocol):
         """
         if not transaction.called:
             if rc:
-                print "***", transaction, "Sending Request"
+                print "*** {} Sending Request RTO={}, Rc={}".format(transaction, rto, rc)
                 self.transport.write(transaction.request, transaction.addr)
                 self.reactor.callLater(rto, self.send, transaction, rto*2, rc-1)
             else:
@@ -136,6 +138,9 @@ class StunUdpClient(StunUdpProtocol):
     def _transaction_completed(self, result, transaction):
         del self._transactions[transaction.transaction_id]
         return result
+
+    def get_transaction(self, msg):
+        return self._transactions.get(msg.transaction_id)
 
     def _stun_binding_success(self, msg, addr):
         """
@@ -220,6 +225,9 @@ class LongTermCredentialMechanism(CredentialMechanism):
         msg.add_attr(stun.Nonce, self.nonce)
         msg.add_attr(stun.Realm, self.realm)
         msg.add_attr(stun.MessageIntegrity, self.hmac_key)
+
+    def __str__(self):
+        return "nonce={}, realm={}, hmac_key={}".format(self.nonce, self.realm, self.hmac_key)
 
 
 def main():
