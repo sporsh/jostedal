@@ -53,8 +53,8 @@ class StunUdpProtocol(DatagramProtocol):
                 self._stun_binding_error,
             }
 
-    def start(self):
-        port = self.reactor.listenUDP(self.port, self)
+    def start(self, interface=None):
+        port = self.reactor.listenUDP(self.port, self, interface)
         print "*** Started {}".format(port)
         return port.port
 
@@ -72,7 +72,6 @@ class StunUdpProtocol(DatagramProtocol):
         handler = self._handlers.get((msg.msg_method, msg.msg_class))
         if handler:
             print "*** {} Received STUN".format(self)
-            print str(msg).encode('hex')
             print msg.format()
             handler(msg, addr)
         else:
@@ -171,6 +170,14 @@ class StunUdpServer(StunUdpProtocol):
     def __init__(self, reactor, port=3478):
         StunUdpProtocol.__init__(self, reactor, port)
 
+    def respond(self, response, addr):
+        response.add_attr(stun.Software, self.software)
+        self.credential_mechanism.update(response)
+        response.add_attr(stun.Fingerprint)
+        self.transport.write(response, addr)
+        print "*** {} Sent".format(self)
+        print response.format()
+
     def _stun_binding_request(self, msg, (host, port)):
         if msg.msg_class == stun.CLASS_REQUEST:
             unknown_attributes = msg.unknown_comp_required_attrs()
@@ -188,7 +195,7 @@ class StunUdpServer(StunUdpProtocol):
                 response.add_attr(stun.XorMappedAddress, family, port, host)
                 response.add_attr(stun.Software, AGENT_NAME)
                 response.add_attr(stun.Fingerprint)
-            self.transport.write(response, (host, port))
+            self.respond(response, (host, port))
 
     def _stun_binding_indication(self, msg, addr):
         pass

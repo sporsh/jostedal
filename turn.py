@@ -2,6 +2,7 @@ import stun
 import struct
 from stun_agent import StunUdpClient, StunUdpServer, TransactionError,\
     LongTermCredentialMechanism, CredentialMechanism
+from relay import RelayAllocation
 
 
 MSG_CHANNEL = 0b01
@@ -55,6 +56,19 @@ class Lifetime(stun.Attribute):
     :see: http://tools.ietf.org/html/rfc5766#section-14.2
     """
     type = ATTR_LIFETIME
+    _struct = struct.Struct('>L')
+
+    def __init__(self, data, lifetime):
+        self.lifetime = lifetime
+
+    @classmethod
+    def decode(cls, data, offset, length):
+        lifetime = cls._struct.unpack_from(data, offset)
+        return cls(buffer(data, offset, length), lifetime)
+
+    @classmethod
+    def encode(cls, msg, lifetime):
+        return cls(cls._struct.pack(lifetime), lifetime)
 
 
 @stun.attribute
@@ -353,6 +367,9 @@ class TurnUdpServer(StunUdpServer):
 
     def __init__(self, reactor, port=3478):
         StunUdpServer.__init__(self, reactor, port)
+        self._relays = []
+
+        self.credential_mechanism = LongTermCredentialMechanism(nonce, realm, username, password)
 
         self._handlers.update({
             # Allocate handlers
@@ -372,6 +389,14 @@ class TurnUdpServer(StunUdpServer):
         """
         #TODO: detect retransmission, skip to success response
         # 1. require request to be authenticated
+        message_integrity = msg.get_attr(stun.ATTR_MESSAGE_INTEGRITY)
+        if not message_integrity:
+            response = stun.Message.encode(METHOD_ALLOCATE,
+                                           stun.CLASS_RESPONSE_ERROR,
+                                           transaction_id=msg.transaction_id)
+            response.add_attr(stun.ErrorCode, *stun.ERR_UNAUTHORIZED)
+            self.respond(response, (host, port))
+            return
         # 2. Check if the 5-tuple is currently in use
         # 3. Check REQUESTED-TRANSPORT attribute
         requested_transport = msg.get_attr(ATTR_REQUESTED_TRANSPORT)
@@ -414,7 +439,7 @@ class TurnUdpServer(StunUdpServer):
         family = stun.Address.aftof(self.transport.addressFamily)
         response.add_attr(stun.XorMappedAddress, family, port, host)
 
-        self.transport.write(response, (host, port))
+        self.respond(response, (host, port))
 
     def _allocate_relay_addr(self, even_port):
         """
@@ -426,11 +451,14 @@ class TurnUdpServer(StunUdpServer):
                 #      and assign a token to that reservation
         """
         family = stun.Address.FAMILY_IPv4
-        port = 0
-        address = '0.0.0.0'
+        relay = RelayAllocation(self.reactor)
+        self._relays.append(relay)
+        interface = '10.47.4.126'
+        prt = relay.start(interface)
+        port, address = prt._realPortNumber, interface
         return (family, port, address), None
 
-    def _stun_refresh_request(self, message):
+    def _stun_refresh_request(self, msg, addr):
         """
         :see: http://tools.ietf.org/html/rfc5766#section-7.2
         """
@@ -465,8 +493,8 @@ def main():
 
 def runserver():
     from twisted.internet import reactor
-    server = TurnUdpServer(reactor, port=6666)
-    server.start()
+    server = TurnUdpServer(reactor)
+    server.start('10.47.4.126')
     reactor.run()
 
 if __name__ == '__main__':
