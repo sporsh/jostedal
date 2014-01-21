@@ -15,9 +15,8 @@ MAGIC_COOKIE = 0x2112A442
 
 
 # STUN Methods Registry
-#                0x000 (Reserved)
-METHOD_BINDING = 0x001
-#                0x002 (Reserved; was SharedSecret)
+METHOD_BINDING =        0x001
+METHOD_SHARED_SECRET =  0x002 # (Reserved)
 
 
 CLASS_REQUEST =             0x00
@@ -117,8 +116,8 @@ class Message(bytearray):
         assert ord(data[0]) >> 6 == MSG_STUN, \
             "Stun message MUST start with 0b00"
         msg_type, msg_length, magic_cookie, transaction_id = cls._struct.unpack_from(data)
-        assert magic_cookie == MAGIC_COOKIE, \
-            "Incorrect magic cookie ({:#x})".format(magic_cookie)
+#         assert magic_cookie == MAGIC_COOKIE, \
+#             "Incorrect magic cookie ({:#x})".format(magic_cookie)
         assert msg_length % 4 == 0, \
             "Message not aliged to 4 byte boundary"
         msg_type &= 0x3fff               # 00111111 11111111
@@ -186,7 +185,7 @@ class Message(bytearray):
                     self._attributes))
 
     def format(self):
-        return '\n'.join([
+        string = '\n'.join([
             "{0.__class__.__name__}",
             "    method:         {0.msg_method:#05x}",
             "    class:          {0.msg_class:#04x}",
@@ -194,8 +193,9 @@ class Message(bytearray):
             "    magic-cookie:   {0.magic_cookie:#010x}",
             "    transaction-id: {1}",
             "    attributes:",
-            ] + ["    \t" + repr(attr) for attr in self._attributes]
-            ).format(self, self.transaction_id.encode('hex'))
+            ]).format(self, self.transaction_id.encode('hex'))
+        string += '\n'.join(["    \t" + repr(attr) for attr in self._attributes])
+        return string
 
 
 # Decorator shortcut for adding known attribute classes
@@ -282,12 +282,13 @@ class Address(Attribute):
 
     @classmethod
     def encode(cls, msg, family, port, address):
+        xport = port
         packed_ip = socket.inet_pton(Address.ftoaf(family), address)
         if cls._xored:
             magic = bytearray(*struct.unpack_from('>16s', msg, 4))
-            port = port ^ magic[0] << 8 ^ magic[1]
+            xport = port ^ magic[0] << 8 ^ magic[1]
             packed_ip = bytearray(ord(a) ^ b for a, b in zip(packed_ip, magic))
-        data = cls.struct.pack(family, port) + packed_ip
+        data = cls.struct.pack(family, xport) + packed_ip
         return cls(data, family, port, address)
 
     def __repr__(self):
