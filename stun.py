@@ -192,7 +192,7 @@ class Message(bytearray):
             "    length:         {0.length}",
             "    magic-cookie:   {0.magic_cookie:#010x}",
             "    transaction-id: {1}",
-            "    attributes:",
+            "    attributes:", ""
             ]).format(self, self.transaction_id.encode('hex'))
         string += '\n'.join(["    \t" + repr(attr) for attr in self._attributes])
         return string
