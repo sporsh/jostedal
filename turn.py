@@ -155,13 +155,9 @@ class ReservationToken(stun.Attribute):
     type = ATTR_RESERVATION_TOKEN
 
 
-class RelayAllocation(DatagramProtocol):
-    def __init__(self, reactor, addr):
-        self.reactor = reactor
+class Relay(DatagramProtocol):
+    def __init__(self, addr):
         self.addr = addr
-
-        self.interface = None
-        self.port = None
 
         # Authentication information
         self.hmac_key = None
@@ -171,11 +167,18 @@ class RelayAllocation(DatagramProtocol):
         self.permissions = []#('ipaddr', 'lifetime'),]
         self.channel_to_peer_bindings = []
 
-    def start(self, interface, port=0):
-        port = self.reactor.listenUDP(port, self, interface)
-        print "*** Started {}".format(port), port.socket.getsockname(), port.port
-        self.interface, self.port = port.socket.getsockname()
-        return port
+    @property
+    def relay_addr(self):
+        family = stun.Address.aftof(self.transport.socket.family)
+        addr, port = self.transport.socket.getsockname()
+        return (family, port, addr)
+
+    @classmethod
+    def allocate(cls, reactor, addr, interface, port=0):
+        relay = cls(addr)
+        port = reactor.listenUDP(port, relay, interface)
+        print "*** Started {}".format(relay)
+        return relay
 
     def add_permission(self, peer_addr):
         self.permissions.append(peer_addr)
@@ -202,8 +205,7 @@ class RelayAllocation(DatagramProtocol):
             print "*** {} Received from {}:{}".format(self, *addr)
 
     def __str__(self):
-        return "Relay(on {}:{} for {}:{})".format(self.interface, self.port,
-                                                  *self.addr)
+        return "Relay(on {} for {})".format(self.relay_addr, self.addr)
 
 
 class Allocation(object):
@@ -416,10 +418,11 @@ class TurnUdpServer(StunUdpServer):
     max_lifetime = 3600
     default_lifetime = 600
 
-    def __init__(self, reactor, port=3478):
-        StunUdpServer.__init__(self, reactor, port)
+    def __init__(self, reactor, username, password, realm, port=3478, interface=''):
+        StunUdpServer.__init__(self, reactor, port, interface)
         self._relays = {}
 
+        nonce = 'somerandomnonce'
         self.credential_mechanism = LongTermCredentialMechanism(nonce, realm, username, password)
 
         self._handlers.update({
@@ -445,9 +448,7 @@ class TurnUdpServer(StunUdpServer):
         # 1. require request to be authenticated
         message_integrity = msg.get_attr(stun.ATTR_MESSAGE_INTEGRITY)
         if not message_integrity:
-            response = stun.Message.encode(METHOD_ALLOCATE,
-                                           stun.CLASS_RESPONSE_ERROR,
-                                           transaction_id=msg.transaction_id)
+            response = msg.create_response(stun.CLASS_RESPONSE_ERROR)
             response.add_attr(stun.ErrorCode, *stun.ERR_UNAUTHORIZED)
             self.respond(response, addr)
             return
@@ -459,9 +460,7 @@ class TurnUdpServer(StunUdpServer):
             # TODO
             pass
         elif relay_allocation:
-            response = stun.Message.encode(METHOD_ALLOCATE,
-                                           stun.CLASS_RESPONSE_ERROR,
-                                           transaction_id=msg.transaction_id)
+            response = msg.create_response(stun.CLASS_RESPONSE_ERROR)
             response.add_attr(stun.ErrorCode, *ERR_ALLOCATION_MISMATCH)
             self.respond(response, addr)
             return
@@ -469,16 +468,12 @@ class TurnUdpServer(StunUdpServer):
         # 3. Check REQUESTED-TRANSPORT attribute
         requested_transport = msg.get_attr(ATTR_REQUESTED_TRANSPORT)
         if not requested_transport:
-            response = stun.Message.encode(METHOD_ALLOCATE,
-                                           stun.CLASS_RESPONSE_ERROR,
-                                           transaction_id=msg.transaction_id)
+            response = msg.create_response(stun.CLASS_RESPONSE_ERROR)
             response.add_attr(stun.ErrorCode, *stun.ERR_BAD_REQUEST)
             self.respond(response, addr)
             return
         elif requested_transport.protocol != TRANSPORT_UDP:
-            response = stun.Message.encode(METHOD_ALLOCATE,
-                                           stun.CLASS_RESPONSE_ERROR,
-                                           transaction_id=msg.transaction_id)
+            response = msg.create_response(stun.CLASS_RESPONSE_ERROR)
             response.add_attr(stun.ErrorCode, *ERR_UNSUPPORTED_TRANSPORT_PROTOCOL)
             self.respond(response, addr)
             return
@@ -499,7 +494,9 @@ class TurnUdpServer(StunUdpServer):
         # 8. reject with 300 if we want to redirect to another server RFC5389
         # 6. Check EVEN-PORT
         else:
-            relay_addr, token = self._allocate_relay_addr(even_port, addr)
+            relay, token = self._allocate_relay_addr(even_port, addr)
+            relay.transaction_id = msg.transaction_id
+            relay_addr = relay.relay_addr
 
         # Determine initial time-to-expiry
         lifetime = msg.get_attr(ATTR_LIFETIME)
@@ -508,10 +505,7 @@ class TurnUdpServer(StunUdpServer):
         else:
             time_to_expiry = self.default_lifetime
 
-        response = stun.Message.encode(METHOD_ALLOCATE,
-                                       stun.CLASS_RESPONSE_SUCCESS,
-                                       transaction_id=msg.transaction_id)
-
+        response = msg.create_response(stun.CLASS_RESPONSE_SUCCESS)
         response.add_attr(XorRelayedAddress, *relay_addr)
         if token:
             response.add_attr(ReservationToken, token)
@@ -525,27 +519,21 @@ class TurnUdpServer(StunUdpServer):
     def _allocate_relay_addr(self, even_port, addr):
         """
         :param even_port: If True, the allocated addres port number will be even
-        :param reserve: Wether to reserve the next port number and assign a token
+        :param even_port.reserve: Wether to reserve the next port number and assign a token
                 #TODO: find pair of port-numbers N, N+1 on same IP where
                 #      N is even, set relayed transport addr with N and
                 #      reserve N+1 for atleast 30s (until N released)
                 #      and assign a token to that reservation
         """
-        family = stun.Address.FAMILY_IPv4
-        relay = RelayAllocation(self.reactor, addr)
+        relay = Relay.allocate(self.reactor, addr, self.interface)
         self._relays[addr] = relay
-        interface = '10.47.4.126'
-        prt = relay.start(interface)
-        port, address = prt._realPortNumber, interface
-        return (family, port, address), None
+        return relay, None
 
     def _stun_refresh_request(self, msg, addr):
         """
         :see: http://tools.ietf.org/html/rfc5766#section-7.2
         """
-        response = stun.Message.encode(METHOD_REFRESH,
-                                       stun.CLASS_RESPONSE_SUCCESS,
-                                       transaction_id=msg.transaction_id)
+        response = msg.create_response(stun.CLASS_RESPONSE_SUCCESS)
         self.respond(response, addr)
 
     def _stun_create_permission_request(self, msg, addr):
@@ -555,9 +543,7 @@ class TurnUdpServer(StunUdpServer):
         # 1. require request to be authenticated
         message_integrity = msg.get_attr(stun.ATTR_MESSAGE_INTEGRITY)
         if not message_integrity:
-            response = stun.Message.encode(METHOD_CREATE_PERMISSION,
-                                           stun.CLASS_RESPONSE_ERROR,
-                                           transaction_id=msg.transaction_id)
+            response = msg.create_response(stun.CLASS_RESPONSE_ERROR)
             response.add_attr(stun.ErrorCode, *stun.ERR_UNAUTHORIZED)
             self.respond(response, addr)
             return
@@ -565,9 +551,7 @@ class TurnUdpServer(StunUdpServer):
         relay = self._relays.get(addr)
         peer_addr = msg.get_attr(ATTR_XOR_PEER_ADDRESS)
         relay.add_permission(peer_addr.address)
-        response = stun.Message.encode(METHOD_CREATE_PERMISSION,
-                                       stun.CLASS_RESPONSE_SUCCESS,
-                                       transaction_id=msg.transaction_id)
+        response = msg.create_response(stun.CLASS_RESPONSE_SUCCESS)
         self.respond(response, addr)
 
     def _stun_send_indication(self, msg, addr):
@@ -605,11 +589,17 @@ def main():
 
     reactor.run()
 
-def runserver():
+
+def runserver(interface, port, username, password, realm):
+    """Usage: turn <interface> <port> <username> <password> <realm>
+    """
     from twisted.internet import reactor
-    server = TurnUdpServer(reactor)
-    server.start('10.47.4.126')
+    server = TurnUdpServer(reactor, username, password, realm, port=int(port),
+                           interface=interface)
+    server.start()
     reactor.run()
 
+
 if __name__ == '__main__':
-    runserver()
+    import sys
+    runserver(*sys.argv[1:])

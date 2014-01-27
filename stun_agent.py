@@ -28,7 +28,7 @@ class StunTransaction(defer.Deferred):
 class StunUdpProtocol(DatagramProtocol):
     software = AGENT_NAME
 
-    def __init__(self, reactor, port, RTO=3., Rc=7, Rm=16):
+    def __init__(self, reactor, port, interface='', RTO=3., Rc=7, Rm=16):
         """
         :param port: UDP port to bind to
         :param RTO: Retransmission TimeOut (initial value)
@@ -36,7 +36,8 @@ class StunUdpProtocol(DatagramProtocol):
         :param Rm: Retransmission Multiplier (timeout = Rm * RTO)
         """
         self.reactor = reactor
-        self. port = port
+        self.port = port
+        self.interface = interface
         self.RTO = .5
         self.Rc = 7
         self.timeout = Rm * RTO
@@ -53,8 +54,8 @@ class StunUdpProtocol(DatagramProtocol):
                 self._stun_binding_error,
             }
 
-    def start(self, interface=None):
-        port = self.reactor.listenUDP(self.port, self, interface)
+    def start(self):
+        port = self.reactor.listenUDP(self.port, self, self.interface)
         print "*** Started {}".format(port)
         return port.port
 
@@ -167,8 +168,8 @@ class StunUdpClient(StunUdpProtocol):
 
 
 class StunUdpServer(StunUdpProtocol):
-    def __init__(self, reactor, port=3478):
-        StunUdpProtocol.__init__(self, reactor, port)
+    def __init__(self, reactor, port=3478, interface=''):
+        StunUdpProtocol.__init__(self, reactor, port, interface)
 
     def respond(self, response, addr):
         response.add_attr(stun.Software, self.software)

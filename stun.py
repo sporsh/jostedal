@@ -176,6 +176,10 @@ class Message(bytearray):
         attr_cls = cls._ATTR_TYPE_CLS.get(attr_type)
         return attr_cls.__name__ if attr_cls else "{:#06x}".format(attr_type)
 
+    def create_response(self, msg_class):
+        return self.encode(self.msg_method, msg_class, self.magic_cookie,
+                           self.transaction_id)
+
     def __repr__(self):
         return ("{}(method={:#05x}, class={:#04x}, length={}, "
                 "magic_cookie={:#010x}, transaction_id={}, attributes={})".format(
