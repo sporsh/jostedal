@@ -205,6 +205,9 @@ class Relay(DatagramProtocol):
                 msg.add_attr(XorPeerAddress, family, port, host)
                 msg.add_attr(Data, datagram)
             self.transport.write(msg, self.addr)
+        else:
+            print "*** WARNING: Dropping datagram from {}: No permission".format(host)
+            print datagram.encode('hex')
 
 
     def __str__(self):
@@ -448,7 +451,12 @@ class TurnUdpServer(StunUdpServer):
         """
         :see: http://tools.ietf.org/html/rfc5766#section-6.2
         """
-        #TODO: detect retransmission, skip to success response
+        # Detect retransmission, resend success response
+        relay_allocation = self._relays.get(addr)
+        if relay_allocation and relay_allocation.transaction_id == msg.transaction_id:
+            # TODO: handle allocate retransmission
+            raise NotImplementedError("Allocation retransmission")
+
         # 1. require request to be authenticated
         message_integrity = msg.get_attr(stun.ATTR_MESSAGE_INTEGRITY)
         if not message_integrity:
@@ -458,11 +466,7 @@ class TurnUdpServer(StunUdpServer):
             return
 
         # 2. Check if the 5-tuple is currently in use
-        relay_allocation = self._relays.get(addr)
-        if relay_allocation and relay_allocation.transaction_id == msg.transaction_id:
-            # TODO: handle allocate retransmission
-            raise NotImplementedError("Allocation retransmission")
-        elif relay_allocation:
+        if relay_allocation:
             response = msg.create_response(stun.CLASS_RESPONSE_ERROR)
             response.add_attr(stun.ErrorCode, *ERR_ALLOCATION_MISMATCH)
             self.respond(response, addr)
@@ -502,11 +506,7 @@ class TurnUdpServer(StunUdpServer):
             relay_addr = relay.relay_addr
 
         # Determine initial time-to-expiry
-        lifetime = msg.get_attr(ATTR_LIFETIME)
-        if lifetime:
-            time_to_expiry = max(self.default_lifetime, min(self.max_lifetime, lifetime.time_to_expiry))
-        else:
-            time_to_expiry = self.default_lifetime
+        time_to_expiry = self._time_to_expiry(msg.get_attr(ATTR_LIFETIME))
 
         response = msg.create_response(stun.CLASS_RESPONSE_SUCCESS)
         response.add_attr(XorRelayedAddress, *relay_addr)
@@ -528,9 +528,18 @@ class TurnUdpServer(StunUdpServer):
                 #      reserve N+1 for atleast 30s (until N released)
                 #      and assign a token to that reservation
         """
+        if even_port:
+            raise NotImplementedError("EVEN-PORT handling")
         relay = Relay.allocate(self.reactor, addr, self.interface)
         self._relays[addr] = relay
         return relay, None
+
+    def _time_to_expiry(self, lifetime):
+        if lifetime:
+            time_to_expiry = max(self.default_lifetime, min(self.max_lifetime,lifetime.time_to_expiry))
+        else:
+            time_to_expiry = self.default_lifetime
+        return time_to_expiry
 
     def _stun_refresh_request(self, msg, addr):
         """
@@ -539,10 +548,8 @@ class TurnUdpServer(StunUdpServer):
         lifetime = msg.get_attr(ATTR_LIFETIME)
         if lifetime and lifetime.time_to_expiry == 0:
             desired_lifetime = 0
-        elif lifetime:
-            desired_lifetime = max(self.default_lifetime, min(self.max_lifetime, lifetime.time_to_expiry))
         else:
-            desired_lifetime = self.default_lifetime
+            desired_lifetime = self._time_to_expiry(lifetime)
 
         if desired_lifetime:
             response = msg.create_response(stun.CLASS_RESPONSE_SUCCESS)
