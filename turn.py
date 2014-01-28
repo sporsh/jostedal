@@ -57,8 +57,8 @@ class Lifetime(stun.Attribute):
     type = ATTR_LIFETIME
     _struct = struct.Struct('>L')
 
-    def __init__(self, data, lifetime):
-        self.lifetime = lifetime
+    def __init__(self, data, time_to_expiry):
+        self.time_to_expiry = time_to_expiry
 
     @classmethod
     def decode(cls, data, offset, length):
@@ -66,11 +66,11 @@ class Lifetime(stun.Attribute):
         return cls(buffer(data, offset, length), lifetime)
 
     @classmethod
-    def encode(cls, msg, lifetime):
-        return cls(cls._struct.pack(lifetime), lifetime)
+    def encode(cls, msg, time_to_expiry):
+        return cls(cls._struct.pack(time_to_expiry), time_to_expiry)
 
     def __repr__(self):
-        return "LIFETIME(time-to-expiry={})".format(self.lifetime)
+        return "LIFETIME(time-to-expiry={})".format(self.time_to_expiry)
 
 
 @stun.attribute
@@ -156,6 +156,8 @@ class ReservationToken(stun.Attribute):
 
 
 class Relay(DatagramProtocol):
+    relay_addr = (None, None, None)
+
     def __init__(self, addr):
         self.addr = addr
 
@@ -165,18 +167,16 @@ class Relay(DatagramProtocol):
 
         self.time_to_expiry = 10 * 60
         self.permissions = []#('ipaddr', 'lifetime'),]
-        self.channel_to_peer_bindings = []
+        self._channels = {} # channel to peer bindings
 
-    @property
-    def relay_addr(self):
-        family = stun.Address.aftof(self.transport.socket.family)
-        addr, port = self.transport.socket.getsockname()
-        return (family, port, addr)
 
     @classmethod
     def allocate(cls, reactor, addr, interface, port=0):
         relay = cls(addr)
         port = reactor.listenUDP(port, relay, interface)
+        family = stun.Address.aftof(relay.transport.socket.family)
+        addr, port = relay.transport.socket.getsockname()
+        relay.relay_addr = (family, port, addr)
         print "*** Started {}".format(relay)
         return relay
 
@@ -184,28 +184,32 @@ class Relay(DatagramProtocol):
         self.permissions.append(peer_addr)
 
     def send(self, data, addr):
-        print "*** {} Sending to {}:{}".format(self, *addr)
+        print "*** {} -> {}:{}".format(self, *addr)
         self.transport.write(data, addr)
 
     def datagramReceived(self, datagram, addr):
         """
         :see: http://tools.ietf.org/html/rfc5766#section-10.3
         """
-        # TODO: check permissions to see if relaying is permitted
+        print "*** {} <- {}:{}".format(self, *addr)
         host, port = addr
         if host in self.permissions:
-            msg = stun.Message.encode(METHOD_DATA,
-                                      stun.CLASS_INDICATION)
-            family = stun.Address.aftof(self.transport.addressFamily)
-            msg.add_attr(XorPeerAddress, family, port, host)
-            msg.add_attr(Data, datagram)
-
+            channel = self._channels.get(addr)
+            if channel:
+                # TODO: send channel message to client
+                raise NotImplementedError("Send channel message")
+            else:
+                msg = stun.Message.encode(METHOD_DATA,
+                                          stun.CLASS_INDICATION)
+                family = stun.Address.aftof(self.transport.addressFamily)
+                msg.add_attr(XorPeerAddress, family, port, host)
+                msg.add_attr(Data, datagram)
             self.transport.write(msg, self.addr)
 
-            print "*** {} Received from {}:{}".format(self, *addr)
 
     def __str__(self):
-        return "Relay(on {} for {})".format(self.relay_addr, self.addr)
+        return ("Relay(relay-addr={0[2]}:{0[1]}, client-addr={1[0]}:{1[1]})"
+                .format(self.relay_addr, self.addr))
 
 
 class Allocation(object):
@@ -456,9 +460,8 @@ class TurnUdpServer(StunUdpServer):
         # 2. Check if the 5-tuple is currently in use
         relay_allocation = self._relays.get(addr)
         if relay_allocation and relay_allocation.transaction_id == msg.transaction_id:
-            # This is an retransmission
-            # TODO
-            pass
+            # TODO: handle allocate retransmission
+            raise NotImplementedError("Allocation retransmission")
         elif relay_allocation:
             response = msg.create_response(stun.CLASS_RESPONSE_ERROR)
             response.add_attr(stun.ErrorCode, *ERR_ALLOCATION_MISMATCH)
@@ -533,8 +536,20 @@ class TurnUdpServer(StunUdpServer):
         """
         :see: http://tools.ietf.org/html/rfc5766#section-7.2
         """
-        response = msg.create_response(stun.CLASS_RESPONSE_SUCCESS)
-        self.respond(response, addr)
+        lifetime = msg.get_attr(ATTR_LIFETIME)
+        if lifetime and lifetime.time_to_expiry == 0:
+            desired_lifetime = 0
+        elif lifetime:
+            desired_lifetime = max(self.default_lifetime, min(self.max_lifetime, lifetime.time_to_expiry))
+        else:
+            desired_lifetime = self.default_lifetime
+
+        if desired_lifetime:
+            response = msg.create_response(stun.CLASS_RESPONSE_SUCCESS)
+            response.add_attr(Lifetime, desired_lifetime)
+            self.respond(response, addr)
+        elif addr in self._relays:
+            del self._relays[addr]
 
     def _stun_create_permission_request(self, msg, addr):
         """
