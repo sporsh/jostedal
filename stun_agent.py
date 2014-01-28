@@ -60,14 +60,19 @@ class StunUdpProtocol(DatagramProtocol):
         return port.port
 
     def datagramReceived(self, datagram, addr):
-        try:
-            msg = stun.Message.decode(datagram)
-        except Exception as e:
-            print "Failed to decode datagram:", e
-            raise
+        msg_type = ord(datagram[0]) >> 6
+        if msg_type == stun.MSG_STUN:
+            try:
+                msg = stun.Message.decode(datagram)
+            except Exception as e:
+                print "*** ERROR decoding STUN from {}:{}:".format(*addr), str(e)
+                print datagram.encode('hex')
+            else:
+                if isinstance(msg, stun.Message):
+                    self._stun_received(msg, addr)
         else:
-            if isinstance(msg, stun.Message):
-                self._stun_received(msg, addr)
+            print "*** Unknown message in datagram from {}:{}:".format(*addr)
+            print datagram.encode('hex')
 
     def _stun_received(self, msg, addr):
         handler = self._handlers.get((msg.msg_method, msg.msg_class))
