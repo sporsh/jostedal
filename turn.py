@@ -450,6 +450,9 @@ class TurnUdpServer(StunUdpServer):
             # Send handlers
             (METHOD_SEND, stun.CLASS_INDICATION):
                 self._stun_send_indication,
+            # ChannelBind handler
+            (METHOD_CHANNEL_BIND, stun.CLASS_REQUEST):
+                self._stun_channel_bind_request,
             })
 
     def _stun_allocate_request(self, msg, addr):
@@ -590,6 +593,12 @@ class TurnUdpServer(StunUdpServer):
         peer_addr = msg.get_attr(ATTR_XOR_PEER_ADDRESS)
         data = msg.get_attr(ATTR_DATA)
         relay.send(data, (peer_addr.address, peer_addr.port))
+
+    def _stun_channel_bind_request(self, msg, addr):
+        """
+        :see: http://tools.ietf.org/html/rfc5766#section-11.2
+        """
+        raise NotImplementedError("ChannelBind request")
 
 
 def main():
