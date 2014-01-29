@@ -185,7 +185,12 @@ class Relay(DatagramProtocol):
 
     def send(self, data, addr):
         print "*** {} -> {}:{}".format(self, *addr)
-        self.transport.write(data, addr)
+        host, port = addr
+        if host in self.permissions:
+            self.transport.write(data, addr)
+        else:
+            print "*** WARNING: No permissions for {}: Dropping Send request".format(host)
+            print datagram.encode('hex')
 
     def datagramReceived(self, datagram, addr):
         """
@@ -206,7 +211,7 @@ class Relay(DatagramProtocol):
                 msg.add_attr(Data, datagram)
             self.transport.write(msg, self.addr)
         else:
-            print "*** WARNING: Dropping datagram from {}: No permission".format(host)
+            print "*** WARNING: No permissions for {}: Dropping datagram".format(host)
             print datagram.encode('hex')
 
 
@@ -570,7 +575,7 @@ class TurnUdpServer(StunUdpServer):
             self.respond(response, addr)
             return
 
-        relay = self._relays.get(addr)
+        relay = self._relays[addr]
         peer_addr = msg.get_attr(ATTR_XOR_PEER_ADDRESS)
         relay.add_permission(peer_addr.address)
         response = msg.create_response(stun.CLASS_RESPONSE_SUCCESS)
