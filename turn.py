@@ -158,8 +158,9 @@ class ReservationToken(stun.Attribute):
 class Relay(DatagramProtocol):
     relay_addr = (None, None, None)
 
-    def __init__(self, addr):
-        self.addr = addr
+    def __init__(self, server, client_addr):
+        self.server = server
+        self.client_addr = client_addr
 
         # Authentication information
         self.hmac_key = None
@@ -171,26 +172,27 @@ class Relay(DatagramProtocol):
 
 
     @classmethod
-    def allocate(cls, reactor, addr, interface, port=0):
-        relay = cls(addr)
-        port = reactor.listenUDP(port, relay, interface)
+    def allocate(cls, server, client_addr, port=0):
+        relay = cls(server, client_addr)
+        port = server.reactor.listenUDP(port, relay, server.interface)
         family = stun.Address.aftof(relay.transport.socket.family)
-        addr, port = relay.transport.socket.getsockname()
-        relay.relay_addr = (family, port, addr)
-        print "*** Started {}".format(relay)
+        relay_ip, port = relay.transport.socket.getsockname()
+        relay.relay_addr = (family, port, relay_ip)
+        print "*** Allocated {}".format(relay)
         return relay
 
     def add_permission(self, peer_addr):
+        print "*** {} Added permission for {}".format(self, peer_addr)
         self.permissions.append(peer_addr)
 
     def send(self, data, addr):
         print "*** {} -> {}:{}".format(self, *addr)
-        host, port = addr
+        host, _port = addr
         if host in self.permissions:
             self.transport.write(data, addr)
         else:
             print "*** WARNING: No permissions for {}: Dropping Send request".format(host)
-            print datagram.encode('hex')
+            print data.encode('hex')
 
     def datagramReceived(self, datagram, addr):
         """
@@ -209,7 +211,7 @@ class Relay(DatagramProtocol):
                 family = stun.Address.aftof(self.transport.addressFamily)
                 msg.add_attr(XorPeerAddress, family, port, host)
                 msg.add_attr(Data, datagram)
-            self.transport.write(msg, self.addr)
+            self.server.transport.write(msg, self.client_addr)
         else:
             print "*** WARNING: No permissions for {}: Dropping datagram".format(host)
             print datagram.encode('hex')
@@ -217,7 +219,7 @@ class Relay(DatagramProtocol):
 
     def __str__(self):
         return ("Relay(relay-addr={0[2]}:{0[1]}, client-addr={1[0]}:{1[1]})"
-                .format(self.relay_addr, self.addr))
+                .format(self.relay_addr, self.client_addr))
 
 
 class Allocation(object):
@@ -538,7 +540,7 @@ class TurnUdpServer(StunUdpServer):
         """
         if even_port:
             raise NotImplementedError("EVEN-PORT handling")
-        relay = Relay.allocate(self.reactor, addr, self.interface)
+        relay = Relay.allocate(self, addr)
         self._relays[addr] = relay
         return relay, None
 
