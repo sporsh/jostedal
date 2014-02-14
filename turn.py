@@ -1,7 +1,7 @@
 import stun
 import struct
 from stun_agent import StunUdpClient, StunUdpServer, TransactionError,\
-    LongTermCredentialMechanism, CredentialMechanism
+    LongTermCredentialMechanism
 from twisted.internet.protocol import DatagramProtocol
 
 MSG_CHANNEL = 0b01
@@ -220,95 +220,6 @@ class Relay(DatagramProtocol):
     def __str__(self):
         return ("Relay(relay-addr={0[2]}:{0[1]}, client-addr={1[0]}:{1[1]})"
                 .format(self.relay_addr, self.client_addr))
-
-
-class Allocation(object):
-    """Server side allocation
-    """
-    relay_transport_address = None
-
-    transaction_id = None # For detecting retransmissions
-
-    # 5-tuple
-    client_address = None
-    client_port = None
-    server_address = None
-    server_port = None
-    transport_protocol = None
-
-    # Authentication information
-    hmac_key = stun.ha1('username', 'realm', 'password')
-    nonce = None
-
-    time_to_expiry = 10*60
-    permissions = []#[(ipaddr, lifetime),...]
-    channel_to_peer_bindings = []
-
-    def get_hmac_key(self, realm):
-        return stun.ha1('username', realm, 'password')
-
-
-class Allocation_UnAllocated():
-    def __init__(self, host, port, transport=TRANSPORT_UDP, time_to_expiry=None):
-        self.auth = CredentialMechanism()
-
-    def allocate(self):
-        pass
-
-    def _stun_allocate_error(self, response):
-        error_code = response.get_attr(stun.ATTR_ERROR_CODE)
-        realm = response.get_attr(stun.ATTR_REALM)
-        nonce = response.get_attr(stun.ATTR_NONCE)
-        if (error_code.code == stun.ERR_UNAUTHORIZED
-            and realm != self.realm
-            and nonce != self.nonce):
-            # Unauthorized, and got new auth info
-            hmac_key = self._get_hmac_key(realm)
-            self.allocate()
-
-    def _stun_allocation_succeess(self, response):
-        self.state_data.relay_transport_address = response.get_attr(ATTR_XOR_RELAYED_ADDRESS)
-        return Allocation_Allocated(self.state_data)
-
-    def _get_hmac_key(self, realm):
-        return stun.ha1('username', realm, 'password')
-
-class Allocation_Allocated():
-    def refresh(self, time_to_expiry):
-        pass
-
-    def delete(self):
-        self.refresh(time_to_expiry=0)
-
-    def _stun_refresh_error(self, reason):
-        pass
-
-    def _stun_refresh_success(self, result):
-        pass
-
-    def create_permission(self):
-        pass
-
-    def _stun_create_permission_error(self, response):
-        pass
-
-    def _stun_create_permission_success(self, response):
-        pass
-
-    def send(self):
-        pass
-
-    def _stun_data(self, indication):
-        pass
-
-    def channel_bind(self):
-        pass
-
-    def _stun_channel_bind_error(self, response):
-        pass
-
-    def _stun_channel_bind_success(self, response):
-        pass
 
 
 class TurnUdpClient(StunUdpClient):
