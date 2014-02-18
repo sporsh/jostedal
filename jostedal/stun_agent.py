@@ -1,9 +1,9 @@
-import stun
+from jostedal import stun
 from twisted.internet.protocol import DatagramProtocol
 from twisted.internet import defer
 
 
-AGENT_NAME = "PexICE-0.1.0 'Jostedal'"
+AGENT_NAME = "Jostedal-0.1.0"
 
 
 class TransactionError(Exception):

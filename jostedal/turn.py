@@ -1,8 +1,9 @@
-import stun
-import struct
-from stun_agent import StunUdpClient, StunUdpServer, TransactionError,\
-    LongTermCredentialMechanism
+from jostedal import stun
+from jostedal.stun_agent import StunUdpClient, StunUdpServer, \
+    TransactionError, LongTermCredentialMechanism
 from twisted.internet.protocol import DatagramProtocol
+import struct
+
 
 MSG_CHANNEL = 0b01
 
