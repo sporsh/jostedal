@@ -76,6 +76,8 @@ class Message(bytearray):
     _struct = struct.Struct('>2HL12s')
     _ATTR_TYPE_CLS = {}
 
+    _padding = os.urandom
+
     def __init__(self, data, msg_method, msg_class, magic_cookie, transaction_id):
         bytearray.__init__(self, data)
         self.msg_method = msg_method
@@ -97,7 +99,7 @@ class Message(bytearray):
         attr = attr_cls.encode(self, *args, **kwargs)
         self.extend(Attribute.struct.pack(attr.type, len(attr)))
         self.extend(attr)
-        self.extend(os.urandom(attr.padding))
+        self.extend(self._padding(attr.padding))
         self._attributes.append(attr)
         #update length
         self.length = len(self) - self._struct.size
@@ -487,62 +489,3 @@ class Fingerprint(Attribute):
 
     def __repr__(self, *args, **kwargs):
         return "FINGERPRINT(0x{})".format(str.encode(self, 'hex'))
-
-if __name__ == '__main__':
-    msg_data = (
-        '010100582112a4427a2f2b504c6a7457'
-        '52616c5600200008000191170f01b020'
-        '000100080001b0052e131462802b0008'
-        '00010d960af0d7b4802c000800010d97'
-        '0af0d7b48022001a4369747269782d31'
-        '2e382e372e302027426c61636b20446f'
-        '7727000080280004fd824449'
-        ).decode('hex')
-
-    msg_data = (
-        '011300602112a442fedcb2d51f23946d'
-        '9cc9754e0009001000000401556e6175'
-        '74686f72697365640015001036303332'
-        '3763313731343561373738380014000a'
-        '7765627274632e6f72678e4f8022001a'
-        '4369747269782d312e382e372e302027'
-        '426c61636b20446f77270004'
-        '802800045a4c0c70' # Fingerprint
-        ).decode('hex')
-
-#     msg_data = (
-#         '010100302112a442f19b27a4ac5ee376'
-#         '167dde668022001654414e4442455247'
-#         '2f34313230202858372e322e32290000'
-#         '0020000800014dae0f01b02080280004'
-#         '157096bd'
-#         ).decode('hex')
-
-#     msg_data = (
-#         '010100302112a4420e66c5ed541c38eb'
-#         'a7aacf3a8022001654414e4442455247'
-#         '2f34313230202858372e322e32290000'
-#         '002000080001a55a0f01b02080280004'
-#         'f5e69bfb'
-#         ).decode('hex')
-
-    msg = Message.decode(msg_data)
-    print msg.format()
-    print msg_data.encode('hex')
-
-    msg3 = Message.encode(METHOD_BINDING, CLASS_REQUEST)
-    msg3.add_attr(type('Foo', (Unknown,), {'type': 0x6666}), 'data')
-    msg3.add_attr(MappedAddress, Address.FAMILY_IPv4, 1337, '192.168.2.255')
-    msg3.add_attr(Username, "johndoe")
-    msg3.add_attr(MessageIntegrity, ha1('username', 'realm', 'password'))
-    msg3.add_attr(ErrorCode, *ERR_SERVER_ERROR)
-    msg3.add_attr(UnknownAttributes, [0x1337, 0xb00b, 0xbeef])
-    msg3.add_attr(Realm, "pexip.com")
-    msg3.add_attr(Nonce, '36303332376331373134356137373838'.decode('hex'))
-    msg3.add_attr(XorMappedAddress, Address.FAMILY_IPv4, 1337, '192.168.2.255')
-    msg3.add_attr(Software, u"\u8774\u8776 h\xfadi\xe9 'butterfly'")
-    msg3.add_attr(AlternateServer, Address.FAMILY_IPv4, 8008, '192.168.2.128')
-    msg3.add_attr(Fingerprint)
-    print str(msg3).encode('hex')
-    print msg3.format()
-    print Message.decode(str(msg3)).format()
