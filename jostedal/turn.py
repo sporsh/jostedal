@@ -3,6 +3,7 @@ from jostedal.stun_agent import StunUdpClient, StunUdpServer, \
     TransactionError, LongTermCredentialMechanism
 from twisted.internet.protocol import DatagramProtocol
 import struct
+import os
 
 
 MSG_CHANNEL = 0b01
@@ -348,7 +349,7 @@ class TurnUdpServer(StunUdpServer):
         StunUdpServer.__init__(self, reactor, port, interface)
         self._relays = {}
 
-        nonce = 'somerandomnonce'
+        nonce = os.urandom(8).encode('hex')
         self.credential_mechanism = LongTermCredentialMechanism(nonce, realm, username, password)
 
         self._handlers.update({
