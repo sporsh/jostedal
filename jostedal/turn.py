@@ -1,3 +1,9 @@
+"""Jostedal TURN server
+
+Usage:
+    turn <interface> <port> <username> <password> <realm>
+"""
+
 from jostedal import stun
 from jostedal.stun_agent import StunUdpClient, StunUdpServer, \
     TransactionError, LongTermCredentialMechanism
@@ -542,8 +548,6 @@ def main():
 
 
 def runserver(interface, port, username, password, realm):
-    """Usage: turn <interface> <port> <username> <password> <realm>
-    """
     from twisted.internet import reactor
     server = TurnUdpServer(reactor, username, password, realm, port=int(port),
                            interface=interface)
@@ -553,4 +557,6 @@ def runserver(interface, port, username, password, realm):
 
 if __name__ == '__main__':
     import sys
+    if not len(sys.argv) == 6:
+        exit(__doc__)
     runserver(*sys.argv[1:])
