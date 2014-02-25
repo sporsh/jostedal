@@ -10,7 +10,10 @@ from jostedal.stun_agent import StunUdpClient, StunUdpServer, \
 from twisted.internet.protocol import DatagramProtocol
 import struct
 import os
+import logging
 
+
+logger = logging.getLogger(__name__)
 
 MSG_CHANNEL = 0b01
 
@@ -186,27 +189,27 @@ class Relay(DatagramProtocol):
         family = stun.Address.aftof(relay.transport.socket.family)
         relay_ip, port = relay.transport.socket.getsockname()
         relay.relay_addr = (family, port, relay_ip)
-        print "*** Allocated {}".format(relay)
+        logger.info("%s Allocated", relay)
         return relay
 
     def add_permission(self, peer_addr):
-        print "*** {} Added permission for {}".format(self, peer_addr)
+        logger.info("%s Added permission for %s", self, peer_addr)
         self.permissions.append(peer_addr)
 
     def send(self, data, addr):
-        print "*** {} -> {}:{}".format(self, *addr)
+        logger.info("%s -> %s:%d", self, *addr)
         host, _port = addr
         if host in self.permissions:
             self.transport.write(data, addr)
         else:
-            print "*** WARNING: No permissions for {}: Dropping Send request".format(host)
-            print data.encode('hex')
+            logger.warning("No permissions for %s: Dropping Send request", host)
+            logger.debug(data.encode('hex'))
 
     def datagramReceived(self, datagram, addr):
         """
         :see: http://tools.ietf.org/html/rfc5766#section-10.3
         """
-        print "*** {} <- {}:{}".format(self, *addr)
+        logger.info("%s <- %s:%d", self, *addr)
         host, port = addr
         if host in self.permissions:
             channel = self._channels.get(addr)
@@ -221,8 +224,8 @@ class Relay(DatagramProtocol):
                 msg.add_attr(Data, datagram)
             self.server.transport.write(msg, self.client_addr)
         else:
-            print "*** WARNING: No permissions for {}: Dropping datagram".format(host)
-            print datagram.encode('hex')
+            logger.warning("No permissions for %s: Dropping datagram", host)
+            logger.debug(datagram.encode('hex'))
 
 
     def __str__(self):
@@ -296,7 +299,7 @@ class TurnUdpClient(StunUdpClient):
             nonce = failure.value.get_attr(stun.ATTR_NONCE)
             realm = str(failure.value.get_attr(stun.ATTR_REALM))
             self.credential_mechanism = LongTermCredentialMechanism(nonce, realm, 'username', 'password')
-            print self.credential_mechanism
+            logger.debug("Retrying allocation with %s", self.credential_mechanism)
             transaction.addCallback(lambda result: self.allocate(addr))
 
     def refresh(self, time_to_expiry):
@@ -330,9 +333,10 @@ class TurnUdpClient(StunUdpClient):
                 nonce = msg.get_attr(stun.ATTR_NONCE)
                 realm = str(msg.get_attr(stun.ATTR_REALM))
                 self.credential_mechanism = LongTermCredentialMechanism(nonce, realm, 'username', 'password')
-                print self.credential_mechanism
+                logger.debug("Allocation failed: %s", error_code)
                 transaction.addCallback(lambda result: self.allocate(addr))
             else:
+                logger.error("Allocation failed: %s", error_code)
                 transaction.fail(TransactionError(error_code))
 
     def _stun_refresh_success(self, msg, addr):

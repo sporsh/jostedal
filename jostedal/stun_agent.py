@@ -1,7 +1,10 @@
 from jostedal import stun
 from twisted.internet.protocol import DatagramProtocol
 from twisted.internet import defer
+import logging
 
+
+logger = logging.getLogger(__name__)
 
 AGENT_NAME = "Jostedal-0.1.0"
 
@@ -56,7 +59,6 @@ class StunUdpProtocol(DatagramProtocol):
 
     def start(self):
         port = self.reactor.listenUDP(self.port, self, self.interface)
-        print "*** Started {}".format(port)
         return port.port
 
     def datagramReceived(self, datagram, addr):
@@ -65,28 +67,28 @@ class StunUdpProtocol(DatagramProtocol):
             try:
                 msg = stun.Message.decode(datagram)
             except Exception as e:
-                print "*** ERROR decoding STUN from {}:{}:".format(*addr), str(e)
-                print datagram.encode('hex')
+                logger.exception("Failed to decode STUN from %s:%d:", *addr)
+                logger.debug(datagram.encode('hex'))
             else:
                 if isinstance(msg, stun.Message):
                     self._stun_received(msg, addr)
         else:
-            print "*** Unknown message in datagram from {}:{}:".format(*addr)
-            print datagram.encode('hex')
+            logger.warning("Unknown message in datagram from %s:%d:", *addr)
+            logger.debug(datagram.encode('hex'))
 
     def _stun_received(self, msg, addr):
         handler = self._handlers.get((msg.msg_method, msg.msg_class))
         if handler:
-            print "*** {} Received STUN".format(self)
-            print msg.format()
+            logger.info("%s Received STUN", self)
+            logger.debug(msg.format())
             handler(msg, addr)
         else:
-            print "*** {} Received unrecognized STUN".format(self)
-            print msg.format()
+            logger.info("%s Received unrecognized STUN", self)
+            logger.debug(msg.format())
 
     def _stun_unhandeled(self, msg, addr):
-        print "*** {} Unhandeled message from {}".format(self, addr)
-        print msg.format()
+        logger.warning("%s Unhandeled message from %s:%d", self, *addr)
+        logger.debug(msg.format())
 
     def _stun_binding_request(self, msg, addr):
         self._stun_unhandeled(msg, addr)
@@ -122,7 +124,6 @@ class StunUdpClient(StunUdpProtocol):
         self._transactions[transaction.transaction_id] = transaction
         transaction.addBoth(self._transaction_completed, transaction)
         self.send(transaction, self.RTO, self.Rc)
-        print request.format()
         return transaction
 
     def send(self, transaction, rto, rc):
@@ -133,11 +134,11 @@ class StunUdpClient(StunUdpProtocol):
         """
         if not transaction.called:
             if rc:
-                print "*** {} Sending Request RTO={}, Rc={}".format(transaction, rto, rc)
+                logger.info("%s Sending Request RTO=%d, Rc=%d", transaction, rto, rc)
                 self.transport.write(transaction.request, transaction.addr)
                 self.reactor.callLater(rto, self.send, transaction, rto*2, rc-1)
             else:
-                print "***", transaction, "Time Out in {}s".format(self.timeout)
+                logger.warning("%s Time Out in %ds", transaction, self.timeout)
                 self.reactor.callLater(self.timeout, transaction.time_out)
 
     def _transaction_completed(self, result, transaction):
@@ -181,8 +182,8 @@ class StunUdpServer(StunUdpProtocol):
         self.credential_mechanism.update(response)
         response.add_attr(stun.Fingerprint)
         self.transport.write(response, addr)
-        print "*** {} Sent".format(self)
-        print response.format()
+        logger.info("%s Sending response", self)
+        logger.debug(response.format())
 
     def _stun_binding_request(self, msg, (host, port)):
         if msg.msg_class == stun.CLASS_REQUEST:

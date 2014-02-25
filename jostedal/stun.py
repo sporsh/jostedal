@@ -149,7 +149,6 @@ class Message(bytearray):
     def add_attr_cls(cls, attr_cls):
         """Decorator to add a Stun Attribute as an recognized attribute type
         """
-        print "*** Registered attribute {0.type:#06x}={0.__name__}".format(attr_cls)
         assert not cls._ATTR_TYPE_CLS.get(attr_cls.type, False), \
             "Duplicate definition for {:#06x}".format(attr_cls.type)
         cls._ATTR_TYPE_CLS[attr_cls.type] = attr_cls
