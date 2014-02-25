@@ -242,34 +242,3 @@ class LongTermCredentialMechanism(CredentialMechanism):
 
     def __str__(self):
         return "nonce={}, realm={}, hmac_key={}".format(self.nonce, self.realm, self.hmac_key)
-
-
-def main():
-    from twisted.internet import reactor
-
-#     addr = '23.251.129.121', 3478
-#     addr = '46.19.20.100', 3478
-#     addr = '8.34.221.6', 3478
-
-    server = StunUdpServer(reactor)
-    addr = 'localhost', server.start()
-#     addr = 'localhost', 666
-
-    client = StunUdpClient(reactor)
-    client.start()
-
-    d = client.bind(addr)
-    @d.addCallback
-    def binding_succeeded(binding):
-        print "*** Binding succeeded:", binding.format()
-    @d.addErrback
-    def binding_failed(failure):
-        print "*** Binding failed:", failure
-    @d.addBoth
-    def stop(result):
-        reactor.stop()
-
-    reactor.run()
-
-if __name__ == '__main__':
-    main()

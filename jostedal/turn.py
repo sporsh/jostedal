@@ -1,9 +1,3 @@
-"""Jostedal TURN server
-
-Usage:
-    turn <interface> <port> <username> <password> <realm>
-"""
-
 from jostedal import stun
 from jostedal.stun_agent import StunUdpClient, StunUdpServer, \
     TransactionError, LongTermCredentialMechanism
@@ -524,43 +518,3 @@ class TurnUdpServer(StunUdpServer):
         :see: http://tools.ietf.org/html/rfc5766#section-11.2
         """
         raise NotImplementedError("ChannelBind request")
-
-
-def main():
-    from twisted.internet import reactor
-
-    addr = '23.251.129.121', 3478
-
-#     server = TurnUdpServer(reactor)
-#     addr = 'localhost', server.start()
-
-    client = TurnUdpClient(reactor)
-    client.start()
-
-    d = client.allocate(addr)
-    @d.addCallback
-    def allocation_succeeded(allocation):
-        print "*** Allocation succeeded:", allocation
-    @d.addErrback
-    def allocation_failed(failure):
-        print "*** Allocation failed:", failure
-    @d.addBoth
-    def stop(result):
-        pass #reactor.stop()
-
-    reactor.run()
-
-
-def runserver(interface, port, username, password, realm):
-    from twisted.internet import reactor
-    server = TurnUdpServer(reactor, username, password, realm, port=int(port),
-                           interface=interface)
-    server.start()
-    reactor.run()
-
-
-if __name__ == '__main__':
-    import sys
-    if not len(sys.argv) == 6:
-        exit(__doc__)
-    runserver(*sys.argv[1:])
