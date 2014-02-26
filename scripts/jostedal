@@ -1,28 +1,48 @@
 #!/usr/bin/python
 """Usage:
-    {0} <interface:port> <username:password> [realm]
+    {0} INTERFACE [PORT [CONFIG-FILE]]
 """
 
-import os, sys
-import logging
+import os
+import sys
+import json
+import logging.config
 from twisted.internet import reactor
 from jostedal.turn.server import TurnUdpServer
+from jostedal.stun.authentication import LongTermCredentialMechanism
 
-AGENT_NAME = "Jostedal"
-DEFAULTS = ['pexip.com']
-
-logging.basicConfig(level=logging.DEBUG, format="%(levelname)s: %(message)s")
 
 try:
-    addr, credentials = sys.argv[1:3]
-    interface, port = addr.split(':')
-    username, password = credentials.split(':')
-    options = sys.argv[3:] or DEFAULTS
-    realm, = options
+    logging.config.fileConfig('logging.config')
+except:
+    logging.basicConfig(level=logging.DEBUG, format="%(levelname)s: %(message)s")
+    logging.exception("Failed to load 'logging.config' file")
+
+
+try:
+    interface = sys.argv[1]
+    options = [3478, 'jostedal.config']
+    for i, option in enumerate(sys.argv[2:]):
+        options[i] = option
+    port = int(options[0])
+    config_file = options[1]
 except:
     exit(__doc__.format(os.path.basename(__file__)))
-else:
-    server = TurnUdpServer(reactor, interface, int(port), AGENT_NAME, username, password, realm)
-    port = server.start()
-    logging.info("Started %s on %s:%d", server, interface, port)
-    reactor.run()
+
+
+try:
+    with open(config_file) as fp:
+        config = json.load(fp)
+    software = config['software']
+    realm = config['realm']
+    users = config['users']
+except:
+    logging.exception("Failed to load config from %s", config_file)
+    exit(1)
+
+
+credential_mechanism = LongTermCredentialMechanism(realm, users)
+server = TurnUdpServer(reactor, interface, port, software, credential_mechanism)
+port = server.start()
+logging.info("Started %r", server)
+reactor.run()

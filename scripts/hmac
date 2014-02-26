@@ -1,0 +1,16 @@
+#!/usr/bin/python
+"""Generate a HMAC-SHA1 for use by the Long Term credential mechanism
+Usage:
+    {0} USERNAME REALM [PASSWORD]
+"""
+
+import os, sys, getpass
+from jostedal.utils import ha1
+
+try:
+    username, realm = sys.argv[1:3]
+    password, = sys.argv[3:] or [getpass.getpass()]
+except:
+    exit(__doc__.format(os.path.basename(__file__)))
+else:
+    print ha1(username, realm, password).encode('hex')

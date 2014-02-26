@@ -1,10 +1,7 @@
 from jostedal.stun.server import StunUdpServer
-import os
-from jostedal.stun.authentication import LongTermCredentialMechanism
 from jostedal import turn, stun
 from jostedal.stun.attributes import ErrorCode, XorMappedAddress
-from jostedal.turn.attributes import XorRelayedAddress, ReservationToken,\
-    Lifetime
+from jostedal.turn.attributes import XorRelayedAddress, ReservationToken, Lifetime
 from jostedal.stun.agent import Address
 from jostedal.turn.relay import Relay
 
@@ -13,12 +10,10 @@ class TurnUdpServer(StunUdpServer):
     max_lifetime = 3600
     default_lifetime = 600
 
-    def __init__(self, reactor, interface, port, software, username, password, realm):
+    def __init__(self, reactor, interface, port, software, credential_mechanism):
         StunUdpServer.__init__(self, reactor, interface, port, software)
         self._relays = {}
-
-        nonce = os.urandom(8).encode('hex')
-        self.credential_mechanism = LongTermCredentialMechanism(nonce, realm, username, password)
+        self.credential_mechanism = credential_mechanism
 
         self._handlers.update({
             # Allocate handlers
@@ -182,3 +177,10 @@ class TurnUdpServer(StunUdpServer):
         :see: http://tools.ietf.org/html/rfc5766#section-11.2
         """
         raise NotImplementedError("ChannelBind request")
+
+    def __str__(self):
+        return ("interface={0.interface}, port={0.port}, "
+                "{0.credential_mechanism}".format(self))
+
+    def __repr__(self):
+        return "TurnUdpServer({})".format(self)
