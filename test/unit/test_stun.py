@@ -1,6 +1,8 @@
 import unittest
 from jostedal import stun
-from jostedal.stun import Message
+from jostedal.stun.agent import Message, Address, Unknown
+from jostedal.stun import attributes
+from jostedal.utils import ha1
 
 class MessageTest(unittest.TestCase):
     def setUp(self):
@@ -40,18 +42,18 @@ class MessageTest(unittest.TestCase):
         # Override padding generation to make the message data deterministic
         msg._padding = '\x00'.__mul__ # Pad with zero bytes
 
-        msg.add_attr(type('Foo', (stun.Unknown,), {'type': 0x6666}), 'data')
-        msg.add_attr(stun.MappedAddress, stun.Address.FAMILY_IPv4, 1337, '192.168.2.255')
-        msg.add_attr(stun.Username, "johndoe")
-        msg.add_attr(stun.MessageIntegrity, stun.ha1('username', 'realm', 'password'))
-        msg.add_attr(stun.ErrorCode, *stun.ERR_SERVER_ERROR)
-        msg.add_attr(stun.UnknownAttributes, [0x1337, 0xb00b, 0xbeef])
-        msg.add_attr(stun.Realm, "pexip.com")
-        msg.add_attr(stun.Nonce, '36303332376331373134356137373838'.decode('hex'))
-        msg.add_attr(stun.XorMappedAddress, stun.Address.FAMILY_IPv4, 1337, '192.168.2.255')
-        msg.add_attr(stun.Software, u"\u8774\u8776 h\xfadi\xe9 'butterfly'")
-        msg.add_attr(stun.AlternateServer, stun.Address.FAMILY_IPv4, 8008, '192.168.2.128')
-        msg.add_attr(stun.Fingerprint)
+        msg.add_attr(type('Foo', (Unknown,), {'type': 0x6666}), 'data')
+        msg.add_attr(attributes.MappedAddress, Address.FAMILY_IPv4, 1337, '192.168.2.255')
+        msg.add_attr(attributes.Username, "johndoe")
+        msg.add_attr(attributes.MessageIntegrity, ha1('username', 'realm', 'password'))
+        msg.add_attr(attributes.ErrorCode, *stun.ERR_SERVER_ERROR)
+        msg.add_attr(attributes.UnknownAttributes, [0x1337, 0xb00b, 0xbeef])
+        msg.add_attr(attributes.Realm, "pexip.com")
+        msg.add_attr(attributes.Nonce, '36303332376331373134356137373838'.decode('hex'))
+        msg.add_attr(attributes.XorMappedAddress, Address.FAMILY_IPv4, 1337, '192.168.2.255')
+        msg.add_attr(attributes.Software, u"\u8774\u8776 h\xfadi\xe9 'butterfly'")
+        msg.add_attr(attributes.AlternateServer, Address.FAMILY_IPv4, 8008, '192.168.2.128')
+        msg.add_attr(attributes.Fingerprint)
 
         msg_data = (
             '000100bc2112a4426669786564747261'
@@ -66,9 +68,10 @@ class MessageTest(unittest.TestCase):
             '002000080001242be1baa6bd8022001a'
             'e89db4e89db62068c3ba6469c3a92027'
             '627574746572666c7927000080230008'
-            '00011f48c0a8028080280004e43217b7')
+            '00011f48c0a8028080280004e43217b7'
+            ).decode('hex')
 
-        self.assertEqual(str(msg), msg_data.decode('hex'))
+        self.assertEqual(str(msg), msg_data)
 
 
 if __name__ == "__main__":

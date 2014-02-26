@@ -1,71 +1,86 @@
-"""Implementation of RFC 5389 Session Traversal Utilities for NAT (STUN)
-:see: http://tools.ietf.org/html/rfc5389
-"""
-
-import os
-import hmac
+import logging
+from twisted.internet.protocol import DatagramProtocol
+from jostedal import stun
 import struct
+import os
 import socket
-import hashlib
-import binascii
 
 
-MSG_STUN =       0b00
-MAGIC_COOKIE = 0x2112A442
+logger = logging.getLogger(__name__)
 
 
-# STUN Methods Registry
-METHOD_BINDING =        0x001
-METHOD_SHARED_SECRET =  0x002 # (Reserved)
+class StunUdpProtocol(DatagramProtocol):
+    def __init__(self, reactor, interface, port, software, RTO=3., Rc=7, Rm=16):
+        """
+        :param port: UDP port to bind to
+        :param RTO: Retransmission TimeOut (initial value)
+        :param Rc: Retransmission Count (maximum number of request to send)
+        :param Rm: Retransmission Multiplier (timeout = Rm * RTO)
+        """
+        self.reactor = reactor
+        self.interface = interface
+        self.port = port
+        self.software = software
+        self.RTO = .5
+        self.Rc = 7
+        self.timeout = Rm * RTO
 
+        self._handlers = {
+            # Binding handlers
+            (stun.METHOD_BINDING, stun.CLASS_REQUEST):
+                self._stun_binding_request,
+            (stun.METHOD_BINDING, stun.CLASS_INDICATION):
+                self._stun_binding_indication,
+            (stun.METHOD_BINDING, stun.CLASS_RESPONSE_SUCCESS):
+                self._stun_binding_success,
+            (stun.METHOD_BINDING, stun.CLASS_RESPONSE_ERROR):
+                self._stun_binding_error,
+            }
 
-CLASS_REQUEST =             0x00
-CLASS_INDICATION =          0x01
-CLASS_RESPONSE_SUCCESS =    0x10
-CLASS_RESPONSE_ERROR =      0x11
+    def start(self):
+        port = self.reactor.listenUDP(self.port, self, self.interface)
+        return port.port
 
+    def datagramReceived(self, datagram, addr):
+        msg_type = ord(datagram[0]) >> 6
+        if msg_type == stun.MSG_STUN:
+            try:
+                msg = Message.decode(datagram)
+            except Exception:
+                logger.exception("Failed to decode STUN from %s:%d:", *addr)
+                logger.debug(datagram.encode('hex'))
+            else:
+                if isinstance(msg, Message):
+                    self._stun_received(msg, addr)
+        else:
+            logger.warning("Unknown message in datagram from %s:%d:", *addr)
+            logger.debug(datagram.encode('hex'))
 
-# STUN Attribute Registry
-# Comprehension-required range (0x0000-0x7FFF):
-ATTR_MAPPED_ADDRESS =      0x0001
-ATTR_RESPONSE_ADDRESS =    0x0002 # (Reserved)
-ATTR_CHANGE_ADDRESS =      0x0003 # (Reserved)
-ATTR_SOURCE_ADDRESS =      0x0004 # (Reserved)
-ATTR_CHANGED_ADDRESS =     0x0005 # (Reserved)
-ATTR_USERNAME =            0x0006
-ATTR_PASSWORD =            0x0007 # (Reserved)
-ATTR_MESSAGE_INTEGRITY =   0x0008
-ATTR_ERROR_CODE =          0x0009
-ATTR_UNKNOWN_ATTRIBUTES =  0x000A
-ATTR_REFLECTED_FROM =      0x000B # (Reserved)
-ATTR_REALM =               0x0014
-ATTR_NONCE =               0x0015
-ATTR_XOR_MAPPED_ADDRESS =  0x0020
-# Comprehension-optional range (0x8000-0xFFFF):
-ATTR_SOFTWARE =            0x8022
-ATTR_ALTERNATE_SERVER =    0x8023
-ATTR_FINGERPRINT =         0x8028
+    def _stun_received(self, msg, addr):
+        handler = self._handlers.get((msg.msg_method, msg.msg_class))
+        if handler:
+            logger.info("%s Received STUN", self)
+            logger.debug(msg.format())
+            handler(msg, addr)
+        else:
+            logger.info("%s Received unrecognized STUN", self)
+            logger.debug(msg.format())
 
-# Ignored comprehension required attributes for RFC 3489 compability
-IGNORED_ATTRS = [ATTR_RESPONSE_ADDRESS, ATTR_CHANGE_ADDRESS,
-                 ATTR_SOURCE_ADDRESS, ATTR_CHANGED_ADDRESS,
-                 ATTR_PASSWORD, ATTR_REFLECTED_FROM]
+    def _stun_unhandeled(self, msg, addr):
+        logger.warning("%s Unhandeled message from %s:%d", self, *addr)
+        logger.debug(msg.format())
 
-# Error codes (class, number) and recommended reason phrases:
-ERR_TRY_ALTERNATE =     3, 0, "Try Alternate"
-ERR_BAD_REQUEST =       4, 0, "Bad Request"
-ERR_UNAUTHORIZED =      4, 1, "Unauthorized"
-ERR_UNKNOWN_ATTRIBUTE = 4,20, "Unknown Attribute"
-ERR_STALE_NONCE =       4,38, "Stale Nonce"
-ERR_SERVER_ERROR =      5, 0, "Server Error"
+    def _stun_binding_request(self, msg, addr):
+        self._stun_unhandeled(msg, addr)
 
+    def _stun_binding_indication(self, msg, addr):
+        self._stun_unhandeled(msg, addr)
 
-def saslprep(string):
-    #TODO
-    return string
+    def _stun_binding_success(self, msg, addr):
+        self._stun_unhandeled(msg, addr)
 
-def ha1(username, realm, password):
-    return hashlib.md5(':'.join((username, realm, saslprep(password)))).digest()
+    def _stun_binding_error(self, msg, addr):
+        self._stun_unhandeled(msg, addr)
 
 
 class Message(bytearray):
@@ -87,7 +102,7 @@ class Message(bytearray):
         self._attributes = []
 
     @classmethod
-    def encode(cls, msg_method, msg_class, magic_cookie=MAGIC_COOKIE, transaction_id=None, data=''):
+    def encode(cls, msg_method, msg_class, magic_cookie=stun.MAGIC_COOKIE, transaction_id=None, data=''):
         transaction_id = transaction_id or os.urandom(12)
         msg_type = msg_method | msg_class << 4
         header = cls._struct.pack(msg_type, len(data), magic_cookie, transaction_id)
@@ -115,7 +130,7 @@ class Message(bytearray):
         """
         :see: http://tools.ietf.org/html/rfc5389#section-7.3.1
         """
-        assert ord(data[0]) >> 6 == MSG_STUN, \
+        assert ord(data[0]) >> 6 == stun.MSG_STUN, \
             "Stun message MUST start with 0b00"
         msg_type, msg_length, magic_cookie, transaction_id = cls._struct.unpack_from(data)
 #         assert magic_cookie == MAGIC_COOKIE, \
@@ -201,10 +216,6 @@ class Message(bytearray):
             ]).format(self, self.transaction_id.encode('hex'))
         string += '\n'.join(["    \t" + repr(attr) for attr in self._attributes])
         return string
-
-
-# Decorator shortcut for adding known attribute classes
-attribute = Message.add_attr_cls
 
 
 class Attribute(str):
@@ -301,190 +312,5 @@ class Address(Attribute):
             type(self).__name__, self.family, self.port, self.address)
 
 
-@attribute
-class MappedAddress(Address):
-    """
-    :see: http://tools.ietf.org/html/rfc5389#section-15.1
-    """
-    type = ATTR_MAPPED_ADDRESS
-    _xored = False
-
-
-@attribute
-class Username(Attribute):
-    """
-    :see: http://tools.ietf.org/html/rfc5389#section-15.3
-    """
-    type = ATTR_USERNAME
-
-    @classmethod
-    def encode(cls, msg, username):
-        return cls(username.encode('utf8'))
-
-    def __repr__(self, *args, **kwargs):
-        return "USERNAME({!r})".format(str(self))
-
-
-@attribute
-class MessageIntegrity(Attribute):
-    """
-    :see: http://tools.ietf.org/html/rfc5389#section-15.4
-    """
-    type = ATTR_MESSAGE_INTEGRITY
-    _struct = struct.Struct('20s')
-
-    @classmethod
-    def encode(cls, msg, key):
-        """
-        :param key: H(A1) for long-term, SASLprep(password) for short-term auth
-        """
-        # HMAC covers the 'length' value of msg, so it needs to be updated first
-        msg.length += cls._struct.size + Attribute.struct.size
-
-        value = hmac.new(key, msg, hashlib.sha1).digest()
-        return cls(value)
-
-    def __repr__(self):
-        return "MESSAGE-INTEGRITY({})".format(str.encode(self, 'hex'))
-
-
-@attribute
-class ErrorCode(Attribute):
-    """
-    :see: http://tools.ietf.org/html/rfc5389#section-15.6
-    """
-    type = ATTR_ERROR_CODE
-    _struct = struct.Struct('>2x2B')
-
-    def __init__(self, data, err_class, err_number, reason):
-        self.err_class = err_class
-        self.err_number = err_number
-        self.code = err_class * 100 + err_number
-        self.reason = str(reason).decode('utf8')
-
-    @classmethod
-    def decode(cls, data, offset, length):
-        err_class, err_number = cls._struct.unpack_from(data, offset)
-        err_class &= 0b111
-        value = buffer(data, offset, length)
-        reason = buffer(value, cls._struct.size)
-        return cls(value, err_class, err_number, reason)
-
-    @classmethod
-    def encode(cls, msg, err_class, err_number, reason):
-        value = cls._struct.pack(err_class, err_number)
-        reason = reason.encode('utf8')
-        return cls(value + reason, err_class, err_number, reason)
-
-    def __repr__(self):
-        return "ERROR-CODE(code={}, reason={!r})".format(self.code, self.reason)
-
-
-@attribute
-class UnknownAttributes(Attribute):
-    """
-    :see: http://tools.ietf.org/html/rfc5389#section-15.9
-    """
-    type = ATTR_UNKNOWN_ATTRIBUTES
-
-    def __init__(self, data, types):
-        self.types = types
-
-    @classmethod
-    def decode(cls, data, offset, length):
-        types = struct.unpack_from('>{}H'.format(length // 2), data, offset)
-        return cls(buffer(data, offset, length), types)
-
-    @classmethod
-    def encode(cls, msg, types):
-        num = len(types)
-        return cls(struct.pack('>{}H'.format(num), *types), types)
-
-    def __repr__(self):
-        return "UNKNOWN-ATTRIBUTES({})".format(
-            str(["{:#06x}".format(t) for t in self.types]))
-
-
-@attribute
-class Realm(Attribute):
-    """
-    :see: http://tools.ietf.org/html/rfc5389#section-15.7
-    """
-    type = ATTR_REALM
-
-    @classmethod
-    def encode(cls, msg, realm):
-        return cls(realm.encode('utf8'))
-
-    def __repr__(self):
-        return "REALM({})".format(str.__repr__(self))
-
-
-@attribute
-class Nonce(Attribute):
-    """
-    :see: http://tools.ietf.org/html/rfc5389#section-15.8
-    """
-    type = ATTR_NONCE
-    _max_length = 763 # less than 128 characters can be up to 763 bytes
-
-    def __repr__(self):
-        return "NONCE({})".format(str.__repr__(self))
-
-
-@attribute
-class XorMappedAddress(Address):
-    """
-    :see: http://tools.ietf.org/html/rfc5389#section-15.2
-    """
-    type = ATTR_XOR_MAPPED_ADDRESS
-    _xored = True
-
-
-@attribute
-class Software(Attribute):
-    """
-    :see: http://tools.ietf.org/html/rfc5389#section-15.10
-    """
-    type = ATTR_SOFTWARE
-
-    @classmethod
-    def encode(cls, msg, software):
-        return cls(software.encode('utf8'))
-
-    def __repr__(self):
-        return "SOFTWARE({})".format(str.__repr__(self))
-
-
-@attribute
-class AlternateServer(Address):
-    """
-    :see: http://tools.ietf.org/html/rfc5389#section-15.11
-    """
-    type = ATTR_ALTERNATE_SERVER
-
-
-@attribute
-class Fingerprint(Attribute):
-    """
-    :see: http://tools.ietf.org/html/rfc5389#section-15.5
-    """
-    type = ATTR_FINGERPRINT
-    _struct = struct.Struct('>L')
-    _MAGIC = 0x5354554e
-
-    @classmethod
-    def encode(cls, msg):
-        # Checksum covers the 'length' value, so it needs to be updated first
-        msg.length += cls._struct.size + Attribute.struct.size
-
-        fingerprint = (binascii.crc32(msg) & 0xffffffff) ^ cls._MAGIC
-        return cls(cls._struct.pack(fingerprint))
-
-    @classmethod
-    def decode(cls, data, offset, length):
-        fingerprint, = cls._struct.unpack_from(data, offset)
-        return cls(buffer(data, offset, length), fingerprint)
-
-    def __repr__(self, *args, **kwargs):
-        return "FINGERPRINT(0x{})".format(str.encode(self, 'hex'))
+# Decorator shortcut for adding known attribute classes
+attribute = Message.add_attr_cls

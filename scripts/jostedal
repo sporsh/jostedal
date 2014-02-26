@@ -6,9 +6,9 @@
 import os, sys
 import logging
 from twisted.internet import reactor
-from jostedal.turn import TurnUdpServer
+from jostedal.turn.server import TurnUdpServer
 
-
+AGENT_NAME = "Jostedal"
 DEFAULTS = ['pexip.com']
 
 logging.basicConfig(level=logging.DEBUG, format="%(levelname)s: %(message)s")
@@ -22,8 +22,7 @@ try:
 except:
     exit(__doc__.format(os.path.basename(__file__)))
 else:
-    server = TurnUdpServer(reactor, username, password, realm, port=int(port),
-                           interface=interface)
+    server = TurnUdpServer(reactor, interface, int(port), AGENT_NAME, username, password, realm)
     port = server.start()
     logging.info("Started %s on %s:%d", server, interface, port)
     reactor.run()
