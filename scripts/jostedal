@@ -21,7 +21,7 @@ except:
 
 try:
     interface = sys.argv[1]
-    options = [3478, 'jostedal.config']
+    options = [3478, 'config.json']
     for i, option in enumerate(sys.argv[2:]):
         options[i] = option
     port = int(options[0])
